@@ -20,7 +20,12 @@ FIELDS = [
     "added_date", "clz_index",
     "loaned_to", "loan_date", "due_date", "purchase_price",
     "collection_id", "collection_name",
+    # Musik (kind='music'). Speltid sparas i runtime (minuter), antal skivor i nr_discs.
+    "artist", "label", "cat_no", "tracks", "tracklist", "mbid", "discogs_id",
 ]
+
+KINDS = ("movie", "tv", "music")
+VARIOUS = ("various", "various artists", "va", "blandade artister")  # samlingsskivor
 
 ITEMS_TABLE = """
 CREATE TABLE {name} (
@@ -40,7 +45,11 @@ CREATE TABLE {name} (
     collection_id INTEGER, collection_name TEXT, coll_checked INTEGER DEFAULT 0,
     locked TEXT,            -- fält du ändrat själv; skrivs inte över av 'Uppdatera metadata'
     extra TEXT,
-    enriched INTEGER DEFAULT 0
+    enriched INTEGER DEFAULT 0,
+    artist TEXT, label TEXT, cat_no TEXT, tracks INTEGER,
+    tracklist TEXT,         -- JSON-lista med skiva, nummer, titel och längd per spår
+    mbid TEXT,              -- MusicBrainz release-ID
+    discogs_id INTEGER
 )"""
 
 OTHER_TABLES = """
@@ -64,7 +73,9 @@ CREATE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode);
 CREATE INDEX IF NOT EXISTS idx_items_imdb ON items(imdb_id);
 CREATE INDEX IF NOT EXISTS idx_items_tmdb ON items(tmdb_id);
 CREATE INDEX IF NOT EXISTS idx_items_lib ON items(library_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_items_clz ON items(library_id, clz_index);
+CREATE INDEX IF NOT EXISTS idx_items_kind ON items(kind);
+-- CLZ Movies och CLZ Music numrerar var för sig från 1, så musik och film har egna serier
+CREATE UNIQUE INDEX IF NOT EXISTS idx_items_clz2 ON items(library_id, (kind = 'music'), clz_index);
 CREATE INDEX IF NOT EXISTS idx_digital_imdb ON digital(imdb_id);
 CREATE INDEX IF NOT EXISTS idx_digital_tmdb ON digital(tmdb_id);
 """
@@ -110,6 +121,7 @@ def init():
                 needs_backfill = "loaned_to" not in old
             else:
                 con.execute("DROP TABLE items_new")
+        con.execute("DROP INDEX IF EXISTS idx_items_clz")  # före 4.0: delad numrering för film och musik
         con.executescript(OTHER_TABLES)
         if "kind" not in _columns(con, "digital"):
             con.execute("ALTER TABLE digital ADD COLUMN kind TEXT")
@@ -143,19 +155,25 @@ def row_to_dict(row):
     d = dict(row)
     d["extra"] = json.loads(d["extra"]) if d.get("extra") else {}
     d["locked"] = [f for f in (d.get("locked") or "").split(",") if f]
+    if "tracklist" in d:
+        d["tracklist"] = json.loads(d["tracklist"]) if d.get("tracklist") else []
     return d
 
 
 def upsert(con, item: dict):
-    """Lägg till eller uppdatera. Matchar på CLZ-index inom samma samling, annars ny post."""
+    """Lägg till eller uppdatera. Matchar på CLZ-index inom samma samling och samma sorts
+    export (film/serie eller musik), annars ny post."""
+    if isinstance(item.get("tracklist"), list):
+        item = {**item, "tracklist": json.dumps(item["tracklist"], ensure_ascii=False)}
     cols = [f for f in FIELDS if f in item]
     values = [item[c] for c in cols]
     extra = json.dumps(item.get("extra", {}), ensure_ascii=False)
 
     existing = None
     if item.get("clz_index") is not None:
-        existing = con.execute("SELECT id, locked FROM items WHERE library_id=? AND clz_index=?",
-                               (item.get("library_id", 1), item["clz_index"])).fetchone()
+        existing = con.execute(
+            "SELECT id, locked FROM items WHERE library_id=? AND clz_index=? AND (kind='music')=?",
+            (item.get("library_id", 1), item["clz_index"], item.get("kind") == "music")).fetchone()
     if existing:
         locked = set((existing["locked"] or "").split(","))
         keep = [(c, v) for c, v in zip(cols, values) if c not in locked]  # dina egna ändringar ligger kvar

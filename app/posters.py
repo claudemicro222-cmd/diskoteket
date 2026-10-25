@@ -28,6 +28,11 @@ def local_path(path: str) -> str | None:
     return os.path.join(POSTER_DIR, m.group(1)) if m else None
 
 
+def is_tmdb(path: str) -> bool:
+    """Egna omslag och musikomslag finns bara lokalt – allt annat kommer från TMDB."""
+    return not (path or "").lstrip("/").startswith(("custom-", "music-"))
+
+
 def remote_url(path: str) -> str:
     return f"{IMG}{SIZE}/{path.lstrip('/')}"
 
@@ -39,7 +44,7 @@ async def fetch(path: str) -> str | None:
         return None
     if os.path.exists(dest):
         return dest
-    if not settings.get_bool("local_posters"):
+    if not is_tmdb(path) or not settings.get_bool("local_posters"):
         return None
     os.makedirs(POSTER_DIR, exist_ok=True)
     try:

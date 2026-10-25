@@ -3,3 +3,7 @@ appdata
 .env
 **/__pycache__
 *.zip
+tests
+custom_components
+hacs.json
+.github

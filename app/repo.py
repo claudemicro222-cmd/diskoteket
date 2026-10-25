@@ -1,8 +1,10 @@
 """Frågor mot databasen: samlingar, listor, filter, statistik, slump, Home Assistant och backup.
 Ingen webbkod här, så allt går att testa fristående. lib=None betyder 'alla samlingar'."""
 import glob
+import json
 import os
 import re
+import shutil
 import sqlite3
 from datetime import date, datetime
 
@@ -10,7 +12,8 @@ from . import db, settings
 
 LIST_COLS = ("id, library_id, kind, title, series_name, season, year, format, poster_path, barcode, watched, "
              "genres, sort_title, location, loaned_to, due_date, collection_status, my_rating, "
-             "added_date, runtime, collection_id, collection_name, tmdb_id, imdb_id, enriched")
+             "added_date, runtime, collection_id, collection_name, tmdb_id, imdb_id, enriched, "
+             "artist, label, tracks, purchase_price")
 
 WISH = "(collection_status LIKE '%wish%')"
 SOLD = "(collection_status LIKE '%sold%')"
@@ -26,14 +29,24 @@ SORTS = {
     "rating": "COALESCE(my_rating, 0) DESC, imdb_rating DESC",
     "imdb": "imdb_rating DESC",
     "runtime": "runtime",
+    "artist": "COALESCE(artist, '~') COLLATE NOCASE, year, COALESCE(sort_title, title) COLLATE NOCASE",
+    "price": "COALESCE(purchase_price, 0) DESC, title COLLATE NOCASE",
 }
+
+# Fliken "Alla" visar film och serier – musiken har en egen flik
+KIND_SQL = {"movie": "kind='movie'", "tv": "kind='tv'", "music": "kind='music'", "video": "kind IN ('movie', 'tv')"}
+
+
+def _kind(kind, prefix=" AND "):
+    return f"{prefix}{KIND_SQL[kind]}" if kind in KIND_SQL else ""
 
 # Fält som 'Uppdatera metadata' kan skriva över – men inte om du har ändrat dem själv
 LOCKABLE = {"title", "original_title", "year", "series_name", "season", "poster_path", "plot",
             "genres", "runtime", "director", "actors"}
 # Interna fält som aldrig låses. Allt annat du ändrar i appen låses, så att en ny CLZ-import
 # eller 'Uppdatera metadata' inte skriver över det.
-NEVER_LOCK = {"tmdb_id", "imdb_id", "collection_id", "collection_name", "enriched", "coll_checked", "library_id", "kind"}
+NEVER_LOCK = {"tmdb_id", "imdb_id", "collection_id", "collection_name", "enriched", "coll_checked", "library_id", "kind",
+              "mbid", "discogs_id", "tracklist"}
 
 
 def _lib(lib, prefix=" AND "):
@@ -89,9 +102,7 @@ def list_items(lib=None, q="", kind="", status="owned", format="", genre="", loc
         sql += f" AND {WISH}"
     elif status == "loaned":
         sql += f" AND {OWNED} AND loaned_to IS NOT NULL AND loaned_to != ''"
-    if kind in ("movie", "tv"):
-        sql += " AND kind=?"
-        args.append(kind)
+    sql += _kind(kind)
     if format:
         sql += " AND format=?"
         args.append(format)
@@ -141,7 +152,7 @@ def search_filter(rows, q, field="title"):
             if r.get("barcode") and digits.lstrip("0") == r["barcode"].lstrip("0"):
                 scored.append((0, r))
             continue
-        titles = [(r.get(k) or "").lower() for k in ("title", "original_title", "series_name")]
+        titles = [(r.get(k) or "").lower() for k in ("title", "original_title", "series_name", "artist")]
         names = lambda k: [n.strip().lower() for n in (r.get(k) or "").split(" | ") if n.strip()]  # noqa: E731
         score = None
         if field in ("title", "all"):
@@ -162,9 +173,10 @@ def search_filter(rows, q, field="title"):
     return [r for _, r in scored]
 
 
-def facets(lib=None):
-    """Värden till filtermenyerna."""
+def facets(lib=None, kind=""):
+    """Värden till filtermenyerna (för fliken som visas: musik har egna format och genrer)."""
     s, a = _lib(lib)
+    s += _kind("music" if kind == "music" else "video" if kind in ("movie", "tv", "video") else "")
     with db.connect() as con:
         formats = [r[0] for r in con.execute(
             f"SELECT format FROM items WHERE format IS NOT NULL AND format != '' AND {OWNED}{s} "
@@ -199,13 +211,16 @@ EDITABLE = {"title", "year", "format", "edition", "barcode", "location", "notes"
             "loaned_to", "loan_date", "due_date", "collection_status", "season", "series_name",
             "purchase_price", "added_date", "tmdb_id", "poster_path", "plot", "imdb_id", "collection_id",
             "collection_name", "library_id", "original_title", "genres", "runtime", "director", "actors",
-            "enriched", "coll_checked", "kind"}
+            "enriched", "coll_checked", "kind",
+            "artist", "label", "cat_no", "tracks", "tracklist", "mbid", "discogs_id", "nr_discs"}
 
 
 def update(item_id, changes: dict, lock=True, unlock=()):
     """Spara ändringar. Med lock=True låses fälten som ändrats, så att en ny CLZ-import
     eller 'Uppdatera metadata' inte skriver över dem senare."""
     changes = {k: v for k, v in changes.items() if k in EDITABLE}
+    if isinstance(changes.get("tracklist"), list):
+        changes["tracklist"] = json.dumps(changes["tracklist"], ensure_ascii=False) if changes["tracklist"] else None
     with db.connect() as con:
         cur = con.execute("SELECT * FROM items WHERE id=?", (item_id,)).fetchone()
         if not cur:
@@ -242,6 +257,23 @@ def find_existing(lib=None, tmdb_id=None, imdb_id=None, barcode=None):
             f"SELECT {LIST_COLS} FROM items WHERE ({' OR '.join(conds)}){s}", args + a)]
 
 
+def find_music(lib, mbid=None, discogs_id=None, barcode=None):
+    """Finns albumet redan i samlingen? Samma MusicBrainz-/Discogs-utgåva eller samma streckkod."""
+    conds, args = [], []
+    for col, v in (("mbid", mbid), ("discogs_id", discogs_id)):
+        if v:
+            conds.append(f"{col}=?"); args.append(v)
+    found = []
+    if conds:
+        with db.connect() as con:
+            found = [dict(r) for r in con.execute(
+                f"SELECT {LIST_COLS} FROM items WHERE kind='music' AND library_id=? AND ({' OR '.join(conds)})",
+                [lib] + args)]
+    if not found and barcode:
+        found = [e for e in find_existing(lib, barcode=barcode) if e["kind"] == "music"]
+    return found
+
+
 # ---------- Statistik ----------
 
 def _count_names(con, sql, args):
@@ -253,9 +285,19 @@ def _count_names(con, sql, args):
     return out
 
 
+def _top(counts: dict, n: int):
+    return [{"label": k, "n": v} for k, v in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0].lower()))[:n]]
+
+
+def is_various(artist) -> bool:
+    return (artist or "").strip().lower() in db.VARIOUS
+
+
 def stats(lib=None):
     s_, a = _lib(lib)
-    W = f"WHERE {OWNED}{s_}"
+    A = f"WHERE {OWNED}{s_}"
+    W = f"{A} AND kind != 'music'"
+    M = f"{A} AND kind = 'music'"
     with db.connect() as con:
         one = lambda sql: con.execute(sql, a).fetchone()[0]  # noqa: E731
         s = {
@@ -266,11 +308,42 @@ def stats(lib=None):
             "discs": one(f"SELECT COALESCE(SUM(COALESCE(nr_discs, 1)), 0) FROM items {W}"),
             "minutes": one(f"SELECT COALESCE(SUM(runtime), 0) FROM items {W}"),
             "watched": one(f"SELECT COUNT(*) FROM items {W} AND watched=1"),
-            "spent": one(f"SELECT COALESCE(SUM(purchase_price), 0) FROM items {W}"),
+            "spent": one(f"SELECT COALESCE(SUM(purchase_price), 0) FROM items {A}"),
             "wish": one(f"SELECT COUNT(*) FROM items WHERE {WISH}{s_}"),
-            "loaned": one(f"SELECT COUNT(*) FROM items {W} AND loaned_to IS NOT NULL AND loaned_to != ''"),
+            "loaned": one(f"SELECT COUNT(*) FROM items {A} AND loaned_to IS NOT NULL AND loaned_to != ''"),
+            "all_discs": one(f"SELECT COALESCE(SUM(COALESCE(nr_discs, 1)), 0) FROM items {A}"),
         }
         rows = lambda sql: [dict(r) for r in con.execute(sql, a)]  # noqa: E731
+
+        # Värde: vad samlingen kostat enligt inköpspriset (finns bara där du fyllt i det)
+        priced = rows(f"SELECT id, kind, title, artist, format, purchase_price FROM items {A} "
+                      "AND purchase_price > 0 ORDER BY purchase_price DESC")
+        s["value"] = {"total": round(sum(r["purchase_price"] for r in priced), 2), "priced": len(priced),
+                      "items": one(f"SELECT COUNT(*) FROM items {A}"),
+                      "avg": round(sum(r["purchase_price"] for r in priced) / len(priced), 2) if priced else 0,
+                      "top": priced[:5]}
+
+        # Musik
+        artists = {}
+        for (v,) in con.execute(f"SELECT artist FROM items {M} AND artist IS NOT NULL", a):
+            if not is_various(v):
+                artists[v.strip()] = artists.get(v.strip(), 0) + 1
+        s["music"] = {
+            "albums": one(f"SELECT COUNT(*) FROM items {M}"),
+            "discs": one(f"SELECT COALESCE(SUM(COALESCE(nr_discs, 1)), 0) FROM items {M}"),
+            "minutes": one(f"SELECT COALESCE(SUM(runtime), 0) FROM items {M}"),
+            "tracks": one(f"SELECT COALESCE(SUM(tracks), 0) FROM items {M}"),
+            "compilations": sum(1 for (v,) in con.execute(f"SELECT artist FROM items {M}", a) if is_various(v)),
+            "artists_count": len(artists),
+            "artists": _top(artists, 10),
+            "formats": rows(f"SELECT COALESCE(format, '?') AS label, COUNT(*) AS n FROM items {M} "
+                            "GROUP BY format ORDER BY n DESC"),
+            "genres": _top(_count_names(con, f"SELECT genres FROM items {M} AND genres IS NOT NULL", a), 12),
+            "labels": rows(f"SELECT label, COUNT(*) AS n FROM items {M} AND label IS NOT NULL AND label != '' "
+                           "GROUP BY label COLLATE NOCASE ORDER BY n DESC LIMIT 8"),
+            "decades": rows(f"SELECT ((year/10)*10) || '-tal' AS label, COUNT(*) AS n FROM items {M} AND year "
+                            "GROUP BY year/10 ORDER BY year/10"),
+        }
         s["formats"] = rows(f"SELECT COALESCE(format, '?') AS label, COUNT(*) AS n FROM items {W} "
                             "GROUP BY format ORDER BY n DESC")
         s["decades"] = rows(f"SELECT ((year/10)*10) || '-tal' AS label, COUNT(*) AS n FROM items {W} AND year "
@@ -283,7 +356,33 @@ def stats(lib=None):
         s["genres"] = [{"label": k, "n": v} for k, v in sorted(genres.items(), key=lambda kv: -kv[1])[:15]]
         dirs = _count_names(con, f"SELECT director FROM items {W} AND director IS NOT NULL AND kind='movie'", a)
         s["directors"] = [{"label": k, "n": v} for k, v in sorted(dirs.items(), key=lambda kv: -kv[1])[:10]]
+    s["duplicates"] = duplicates(lib)
     return s
+
+
+def duplicates(lib=None):
+    """Samma film/säsong (samma TMDB-ID) eller samma album (artist + titel) mer än en gång,
+    t.ex. både DVD och Blu-ray. Med lib=None räknas alla samlingar."""
+    s, a = _lib(lib)
+    with db.connect() as con:
+        rows = [dict(r) for r in con.execute(
+            f"SELECT id, library_id, kind, title, artist, year, format, edition, season, tmdb_id, poster_path "
+            f"FROM items WHERE {OWNED}{s} ORDER BY id", a)]
+    groups = {}
+    for r in rows:
+        if r["kind"] == "music":
+            if not r["artist"] or is_various(r["artist"]):
+                continue  # samlingsskivor heter ofta likadant utan att vara samma skiva
+            key = ("music", r["artist"].strip().lower(), r["title"].strip().lower())
+        elif r["tmdb_id"]:
+            # Serieboxar utan säsongsnummer (t.ex. "Beck: 13-16" och "Beck: 17-20") är olika – jämför titeln också
+            part = r["season"] or (r["title"].strip().lower() if r["kind"] == "tv" else 0)
+            key = (r["kind"], r["tmdb_id"], part)
+        else:
+            continue
+        groups.setdefault(key, []).append(r)
+    return [{"title": g[0]["title"], "artist": g[0]["artist"], "kind": g[0]["kind"], "items": g}
+            for g in groups.values() if len(g) > 1]
 
 
 # ---------- Slumpa kvällens film ----------
@@ -291,11 +390,9 @@ def stats(lib=None):
 def random_pick(lib=None, kind="movie", unwatched=False, max_runtime=None, genre="", format=""):
     s, args = _lib(lib)
     sql = f"SELECT {LIST_COLS} FROM items WHERE {OWNED} AND (loaned_to IS NULL OR loaned_to = ''){s}"
-    if kind in ("movie", "tv"):
-        sql += " AND kind=?"
-        args.append(kind)
-        if kind == "tv":
-            sql += " AND (season IS NULL OR season = 1)"  # börja en serie från början
+    sql += _kind(kind if kind in ("movie", "tv", "music") else "video")
+    if kind == "tv":
+        sql += " AND (season IS NULL OR season = 1)"  # börja en serie från början
     if unwatched:
         sql += " AND COALESCE(watched, 0)=0"
     if max_runtime:
@@ -328,30 +425,101 @@ def collections(lib=None):
 # ---------- Home Assistant ----------
 
 def ha_summary():
+    """Allt som Home Assistant-integrationen och dess kort visar. Nycklarna från version 3
+    (total, movies, latest_title …) finns kvar så att gamla REST-sensorer fungerar."""
     today = date.today().isoformat()
     with db.connect() as con:
         one = lambda sql, *a: con.execute(sql, a).fetchone()[0]  # noqa: E731
         latest = con.execute(
-            f"SELECT title, added_date, format FROM items WHERE {OWNED} ORDER BY added_date DESC, id DESC LIMIT 5"
-        ).fetchall()
+            f"SELECT id, kind, title, artist, year, added_date, format, poster_path FROM items WHERE {OWNED} "
+            "ORDER BY added_date DESC, id DESC LIMIT 10").fetchall()
         overdue = con.execute(
-            f"SELECT title, loaned_to, due_date FROM items WHERE {OWNED} AND loaned_to IS NOT NULL "
-            "AND loaned_to != '' AND due_date IS NOT NULL AND due_date < ?", (today,)).fetchall()
+            f"SELECT id, kind, title, artist, loaned_to, due_date FROM items WHERE {OWNED} AND loaned_to IS NOT NULL "
+            "AND loaned_to != '' AND due_date IS NOT NULL AND due_date < ? ORDER BY due_date", (today,)).fetchall()
+        per_lib = {r["library_id"]: dict(r) for r in con.execute(
+            f"SELECT library_id, SUM(kind='movie') AS movies, SUM(kind='tv') AS seasons, SUM(kind='music') AS music "
+            f"FROM items WHERE {OWNED} GROUP BY library_id")}
+        formats = [dict(r) for r in con.execute(
+            f"SELECT COALESCE(format, '?') AS label, COUNT(*) AS n FROM items WHERE {OWNED} "
+            "GROUP BY format ORDER BY n DESC LIMIT 8")]
         return {
             "total": one(f"SELECT COUNT(*) FROM items WHERE {OWNED}"),
+            "video": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND kind != 'music'"),
             "movies": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND kind='movie'"),
             "series": one(f"SELECT COUNT(DISTINCT series_name) FROM items WHERE {OWNED} AND kind='tv'"),
             "seasons": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND kind='tv'"),
-            "unwatched": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND COALESCE(watched,0)=0"),
+            "music": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND kind='music'"),
+            "discs": one(f"SELECT COALESCE(SUM(COALESCE(nr_discs, 1)), 0) FROM items WHERE {OWNED}"),
+            "unwatched": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND kind != 'music' AND COALESCE(watched,0)=0"),
             "wishlist": one(f"SELECT COUNT(*) FROM items WHERE {WISH}"),
             "loaned": one(f"SELECT COUNT(*) FROM items WHERE {OWNED} AND loaned_to IS NOT NULL AND loaned_to != ''"),
+            "value": one(f"SELECT COALESCE(SUM(purchase_price), 0) FROM items WHERE {OWNED}"),
             "overdue": len(overdue),
             "overdue_list": [dict(r) for r in overdue],
             "latest_title": latest[0]["title"] if latest else None,
             "latest_added": latest[0]["added_date"] if latest else None,
             "latest": [dict(r) for r in latest],
-            "collections": [{"name": l["name"], "titles": l["owned"], "wishlist": l["wish"]} for l in libraries()],
+            "formats": formats,
+            "collections": [{"name": l["name"], "titles": l["owned"], "wishlist": l["wish"],
+                             "movies": per_lib.get(l["id"], {}).get("movies") or 0,
+                             "seasons": per_lib.get(l["id"], {}).get("seasons") or 0,
+                             "music": per_lib.get(l["id"], {}).get("music") or 0} for l in libraries()],
         }
+
+
+# ---------- Bara digitalt ----------
+
+def digital_only(lib=None):
+    """Titlar som finns i Plex/Jellyfin men inte på skiva (i vald samling). Önskade markeras."""
+    s, a = _lib(lib, " AND i.")
+    match = ("((d.imdb_id IS NOT NULL AND d.imdb_id = i.imdb_id) OR "
+             "(d.tmdb_id IS NOT NULL AND d.tmdb_id = i.tmdb_id AND d.kind = i.kind))")
+    owned = OWNED.replace("collection_status", "i.collection_status")
+    wish = WISH.replace("collection_status", "i.collection_status")
+    with db.connect() as con:
+        rows = [dict(r) for r in con.execute(
+            f"SELECT d.source, d.kind, d.imdb_id, d.tmdb_id, d.title, d.year, "
+            f"EXISTS (SELECT 1 FROM items i WHERE {match} AND {wish}{s}) AS wished "
+            f"FROM digital d WHERE NOT EXISTS (SELECT 1 FROM items i WHERE {match} AND {owned}{s}) "
+            "ORDER BY d.title COLLATE NOCASE, d.year", a + a)]
+    out, seen = [], {}
+    for r in rows:  # samma titel i både Plex och Jellyfin blir en rad
+        key = r["imdb_id"] or (r["kind"], r["tmdb_id"]) or (r["title"], r["year"])
+        if key in seen:
+            seen[key]["sources"].append(r["source"])
+            continue
+        r["sources"] = [r.pop("source")]
+        seen[key] = r
+        out.append(r)
+    return out
+
+
+# ---------- Export ----------
+
+EXPORT_SKIP = {"extra", "locked", "enriched", "coll_checked", "tracklist"}
+
+
+def export_rows(lib=None):
+    s, a = _lib(lib, " WHERE items.")
+    with db.connect() as con:
+        rows = [db.row_to_dict(r) for r in con.execute(
+            f"SELECT items.*, l.name AS library_name FROM items LEFT JOIN libraries l ON l.id = items.library_id{s} "
+            "ORDER BY l.id, items.kind, COALESCE(items.artist, ''), COALESCE(items.sort_title, items.title)", a)]
+    return rows
+
+
+def export_csv(lib=None) -> str:
+    import csv
+    import io
+    rows = export_rows(lib)
+    cols = ["library_name"] + [f for f in db.FIELDS if f not in EXPORT_SKIP and f != "library_id"]
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow(cols + ["tracklist"])
+    for r in rows:
+        tracks = " | ".join(t.get("title", "") for t in r.get("tracklist") or [])
+        w.writerow([r.get(c) if r.get(c) is not None else "" for c in cols] + [tracks])
+    return "﻿" + out.getvalue()  # BOM så att Excel visar å, ä och ö rätt
 
 
 # ---------- Säkerhetskopior ----------
@@ -382,3 +550,69 @@ def list_backups():
     files = sorted(glob.glob(os.path.join(BACKUP_DIR, "*.db")), key=os.path.getmtime, reverse=True)
     return [{"name": os.path.basename(f), "size": os.path.getsize(f),
              "time": datetime.fromtimestamp(os.path.getmtime(f)).isoformat(timespec="minutes")} for f in files]
+
+
+BACKUP_NAME_RE = re.compile(r"[A-Za-z0-9_\-]+\.db")
+
+
+class RestoreError(Exception):
+    pass
+
+
+def _check_db(path):
+    """Är filen en hel SQLite-databas från Diskoteket (vilken version som helst)?"""
+    try:
+        con = sqlite3.connect(f"file:{path.replace(os.sep, '/')}?mode=ro", uri=True)
+        try:
+            if con.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                raise RestoreError("Databasen är skadad (integritetskontrollen misslyckades)")
+            cols = [r[1] for r in con.execute("PRAGMA table_info(items)")]
+            if "title" not in cols:
+                raise RestoreError("Filen är en databas, men inte från Diskoteket")
+            return con.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        finally:
+            con.close()
+    except sqlite3.DatabaseError:
+        raise RestoreError("Filen är ingen databas som går att läsa")
+
+
+def restore_backup(name: str | None = None, data: bytes | None = None) -> dict:
+    """Ersätter databasen med en säkerhetskopia (en av appens egna, eller en uppladdad fil).
+    Tar först en kopia av nuvarande databas, så att det alltid går att ångra."""
+    tmp = os.path.join(db.CONFIG_DIR, ".aterstall.db")
+    for f in (tmp, tmp + "-wal", tmp + "-shm"):
+        if os.path.exists(f):
+            os.remove(f)
+    if name:
+        if not BACKUP_NAME_RE.fullmatch(name) or not os.path.exists(os.path.join(BACKUP_DIR, name)):
+            raise RestoreError("Säkerhetskopian finns inte")
+        shutil.copyfile(os.path.join(BACKUP_DIR, name), tmp)
+    elif data:
+        if not data.startswith(b"SQLite format 3\x00"):
+            raise RestoreError("Filen är ingen databas (välj en .db-fil från Diskoteket)")
+        with open(tmp, "wb") as f:
+            f.write(data)
+    else:
+        raise RestoreError("Välj en säkerhetskopia eller en fil")
+    try:
+        items = _check_db(tmp)
+    except RestoreError:
+        os.remove(tmp)
+        raise
+
+    safety = backup_now("fore-aterstallning")
+    con = sqlite3.connect(db.DB_PATH)
+    try:
+        con.execute("PRAGMA wal_checkpoint(TRUNCATE)")  # allt skrivet ligger nu i själva filen
+    finally:
+        con.close()
+    os.replace(tmp, db.DB_PATH)
+    # Gamla -wal/-shm hör till den förra databasen och skulle förstöra den nya om de låg kvar
+    for f in (db.DB_PATH + "-wal", db.DB_PATH + "-shm", tmp + "-wal", tmp + "-shm"):
+        try:
+            os.remove(f)
+        except OSError:
+            pass
+    db.init()  # uppgraderar en kopia från en äldre version
+    settings._cache = None
+    return {"safety_copy": safety, "items": items}

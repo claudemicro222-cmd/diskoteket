@@ -1,22 +1,24 @@
-"""Diskoteket – egen film- och seriesamling. Startas med: uvicorn app.main:app"""
+"""Diskoteket – egen film-, serie- och musiksamling. Startas med: uvicorn app.main:app"""
 import asyncio
+import json
 import os
 import re
 import time
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 
 from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
+from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse
+from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import barcodes, clz_import, covers, db, enrich, mediaservers, posters, repo, settings, tmdb
+from . import auth, barcodes, clz_import, covers, db, enrich, mediaservers, music, posters, repo, settings, tmdb
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "3.1"
+VERSION = "4.0"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 
@@ -120,7 +122,7 @@ async def items_list(request):
 
 
 async def facets(request):
-    return JSONResponse(repo.facets(lib_of(request)))
+    return JSONResponse(repo.facets(lib_of(request), q(request, "kind")))
 
 
 async def item_get(request):
@@ -128,7 +130,7 @@ async def item_get(request):
 
 
 def clean_changes(changes: dict) -> dict:
-    for k in ("year", "season", "library_id", "runtime"):
+    for k in ("year", "season", "library_id", "runtime", "tracks", "nr_discs"):
         if k in changes:
             changes[k] = int(changes[k]) if str(changes[k] or "").strip().isdigit() else None
     for k in ("my_rating", "purchase_price"):
@@ -194,11 +196,17 @@ async def item_add(request):
 
 
 async def item_rematch(request):
-    """Koppla posten till en annan TMDB-titel (när den automatiska matchningen blev fel)."""
-    need_tmdb()
+    """Koppla posten till en annan TMDB-titel (när den automatiska matchningen blev fel).
+    För musik: ett annat album från MusicBrainz/Discogs ({source, id})."""
     item_id = request.path_params["item_id"]
     old = item_or_404(item_id)
     b = await body(request)
+    if old["kind"] == "music":
+        item = await music.refresh_item(item_id, source=b.get("source"), ref=b.get("id"))
+        if not item:
+            raise HTTPException(404, "Hittade inte albumet")
+        return JSONResponse(item)
+    need_tmdb()
     media = "tv" if b.get("type") == "tv" else "movie"
     changes = {"tmdb_id": int(b["tmdb_id"]), "enriched": 1, "kind": media}
     if media == "tv" and not old.get("series_name"):
@@ -212,10 +220,15 @@ async def item_rematch(request):
 
 
 async def item_refresh(request):
-    need_tmdb()
     item_id = request.path_params["item_id"]
-    item_or_404(item_id)
+    it = item_or_404(item_id)
     reset = bool((await body(request)).get("reset"))
+    if it["kind"] == "music":
+        item = await music.refresh_item(item_id, reset=reset)
+        if not item:
+            raise HTTPException(404, "Hittade inte albumet i MusicBrainz/Discogs – använd 'Fel album?' och välj rätt")
+        return JSONResponse(item)
+    need_tmdb()
     item = await enrich.refresh_item(item_id, reset=reset)
     if not item:
         raise HTTPException(404, "Hittade ingen matchning på TMDB – använd 'Fel film?' och välj rätt")
@@ -275,6 +288,60 @@ async def barcode(request):
     return JSONResponse({"existing": [], **(await barcodes.lookup(code))})
 
 
+# ---------- Musik ----------
+
+async def music_barcode(request):
+    code = re.sub(r"\D", "", request.path_params["code"])
+    existing = repo.find_existing(lib_of(request), barcode=code)
+    if existing:
+        return JSONResponse({"existing": existing})
+    return JSONResponse({"existing": [], **(await music.lookup(code))})
+
+
+async def music_search(request):
+    if not (music.mb_enabled() or music.discogs_enabled()):
+        raise HTTPException(400, "Slå på MusicBrainz eller fyll i en Discogs-nyckel under Meny → Inställningar")
+    return JSONResponse(await music.search(q(request, "q"), q(request, "artist") or None))
+
+
+async def music_add(request):
+    b = await body(request)
+    lib = int(b.get("library_id") or default_lib())
+    source, ref = b.get("source"), b.get("id")
+    if not source or not ref:
+        raise HTTPException(400, "Välj ett album")
+    if not b.get("force"):
+        existing = repo.find_music(lib, mbid=ref if source in ("mb", "MusicBrainz") else None,
+                                   discogs_id=ref if source in ("discogs", "Discogs") else None,
+                                   barcode=b.get("barcode"))
+        if existing:
+            return JSONResponse({"exists": existing}, status_code=409)
+    try:
+        item_id = await music.add(source, ref, {
+            "library_id": lib, "barcode": re.sub(r"\D", "", b.get("barcode") or "") or None,
+            "format": b.get("format") or None, "location": (b.get("location") or "").strip() or None,
+            "wish": bool(b.get("wish")), "added_date": date.today().isoformat()})
+    except LookupError as e:
+        raise HTTPException(404, str(e))
+    return JSONResponse(repo.get(item_id))
+
+
+async def music_manual(request):
+    """Album som inte finns i någon databas: skriv in det själv."""
+    b = clean_changes(await body(request))
+    if not b.get("title"):
+        raise HTTPException(400, "Ange en titel")
+    item = {k: b.get(k) for k in ("title", "artist", "year", "format", "label", "cat_no", "location", "nr_discs",
+                                  "tracks", "genres", "notes")}
+    item.update(kind="music", library_id=int(b.get("library_id") or default_lib()),
+                barcode=re.sub(r"\D", "", b.get("barcode") or "") or None, added_date=date.today().isoformat(),
+                collection_status="On Wish List" if b.get("wish") else "In Collection")
+    with db.connect() as con:
+        item_id, _ = db.upsert(con, item)
+        con.execute("UPDATE items SET enriched=2 WHERE id=?", (item_id,))
+    return JSONResponse(repo.get(item_id))
+
+
 async def search(request):
     need_tmdb()
     query, year = q(request, "q").strip(), q(request, "year")
@@ -299,7 +366,7 @@ async def import_clz(request):
     result["cover_urls"] = len(cover_urls)
     if cover_urls:
         background(fetch_clz_covers(cover_urls))
-    background(enrich.run())
+    background(music.enrich_all() if result["kind"] == "music" else enrich.run())
     return JSONResponse(result)
 
 
@@ -317,10 +384,13 @@ async def fetch_clz_covers(pairs):
 
 
 async def enrich_start(request):
+    if q(request, "kind") == "music":
+        background(music.enrich_all(retry_failed=qbool(request, "retry_failed")))
+        return JSONResponse(music.state)
     need_tmdb()
     if qbool(request, "retry_failed"):
         with db.connect() as con:
-            con.execute("UPDATE items SET enriched=0 WHERE enriched=2")
+            con.execute("UPDATE items SET enriched=0 WHERE enriched=2 AND kind != 'music'")
     background(enrich.run())
     return JSONResponse(enrich.state)
 
@@ -341,13 +411,16 @@ async def status(request):
     s, a = repo._lib(lib)
     with db.connect() as con:
         counts = dict(con.execute(
-            f"SELECT COUNT(*) AS total, SUM(kind='movie') AS movies, SUM(kind='tv') AS tv, "
+            f"SELECT COUNT(*) AS total, SUM(kind='movie') AS movies, SUM(kind='tv') AS tv, SUM(kind='music') AS music, "
             f"SUM(enriched=0) AS waiting, SUM(enriched=2) AS not_found, "
-            f"SUM(poster_path IS NULL OR poster_path='') AS no_poster, SUM({repo.WISH}) AS wish "
+            f"SUM((poster_path IS NULL OR poster_path='') AND kind != 'music') AS no_poster, "
+            f"SUM((poster_path IS NULL OR poster_path='') AND kind = 'music') AS music_no_cover, "
+            f"SUM(kind='music' AND enriched=2) AS music_not_found, SUM({repo.WISH}) AS wish "
             f"FROM items WHERE 1=1{s}", a).fetchone())
         digital_count = dict(con.execute("SELECT source, COUNT(*) FROM digital GROUP BY source").fetchall())
     return JSONResponse({
-        "version": VERSION, "tmdb": tmdb.enabled(), "counts": counts, "enrich": enrich.state,
+        "version": VERSION, "tmdb": tmdb.enabled(), "counts": counts, "enrich": enrich.state, "music": music.state,
+        "music_lookup": music.mb_enabled() or music.discogs_enabled(), "auth": auth.enabled(),
         "posters": {**posters.state, **posters.disk_usage(), "local": settings.get_bool("local_posters")},
         "digital": {"configured": mediaservers.configured(), "counts": digital_count, **digital_state},
         "backups": repo.list_backups()[:8], "backup_hours": settings.get_float("backup_hours"),
@@ -395,6 +468,10 @@ async def digital_sync(request):
     return JSONResponse(digital_state)
 
 
+async def digital_only(request):
+    return JSONResponse(repo.digital_only(lib_of(request)))
+
+
 # ---------- Home Assistant ----------
 
 async def home_assistant(request):
@@ -417,6 +494,119 @@ async def backup_download(request):
     if not os.path.exists(path):
         raise HTTPException(404, "Finns inte")
     return FileResponse(path, filename=name, media_type="application/octet-stream")
+
+
+async def backup_restore(request):
+    """Återställ: en av appens egna kopior (JSON {name}) eller en uppladdad .db-fil (multipart)."""
+    if enrich.state["running"] or music.state["running"] or posters.state["running"]:
+        raise HTTPException(409, "En hämtning pågår i bakgrunden – vänta tills den är klar och försök igen")
+    try:
+        if request.headers.get("content-type", "").startswith("multipart/"):
+            form = await request.form()
+            upload = form.get("file")
+            if not upload or not hasattr(upload, "read"):
+                raise HTTPException(400, "Ingen fil vald")
+            result = await asyncio.to_thread(repo.restore_backup, data=await upload.read())
+        else:
+            result = await asyncio.to_thread(repo.restore_backup, name=(await body(request)).get("name"))
+    except repo.RestoreError as e:
+        raise HTTPException(400, str(e))
+    background(enrich.run())
+    background(music.enrich_all())
+    return JSONResponse({**result, "libraries": repo.libraries()})
+
+
+# ---------- Export ----------
+
+async def export(request):
+    lib = lib_of(request)
+    stamp = datetime.now().strftime("%Y%m%d")
+    if q(request, "format") == "json":
+        data = json.dumps({"exported": datetime.now().isoformat(timespec="seconds"), "version": VERSION,
+                           "libraries": repo.libraries(), "items": repo.export_rows(lib)}, ensure_ascii=False, indent=1)
+        return Response(data, media_type="application/json", headers={
+            "Content-Disposition": f'attachment; filename="diskoteket-{stamp}.json"'})
+    return Response(repo.export_csv(lib), media_type="text/csv; charset=utf-8", headers={
+        "Content-Disposition": f'attachment; filename="diskoteket-{stamp}.csv"'})
+
+
+# ---------- Inloggning ----------
+
+def _cookie(response, request, value, max_age):
+    response.set_cookie(auth.COOKIE, value, max_age=max_age, httponly=True, samesite="lax",
+                        secure=request.url.scheme == "https")
+
+
+async def login(request):
+    b = await body(request)
+    if not auth.enabled():
+        return JSONResponse({"ok": True})
+    if not auth.check_password(b.get("password", "")):
+        await asyncio.sleep(1)  # bromsa den som gissar
+        raise HTTPException(401, "Fel lösenord")
+    r = JSONResponse({"ok": True})
+    _cookie(r, request, auth.make_session(), auth.MAX_AGE)
+    return r
+
+
+async def logout(request):
+    r = JSONResponse({"ok": True})
+    r.delete_cookie(auth.COOKIE)
+    return r
+
+
+async def auth_get(request):
+    return JSONResponse({"enabled": auth.enabled(), "api_key": auth.api_key() if auth.enabled() else None})
+
+
+async def auth_put(request):
+    """Sätt/byt lösenord ({password}) eller stäng av inloggningen ({disable: true})."""
+    b = await body(request)
+    if b.get("disable"):
+        auth.clear_password()
+        return JSONResponse({"enabled": False, "api_key": None})
+    try:
+        auth.set_password(b.get("password") or "")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    r = JSONResponse({"enabled": True, "api_key": auth.api_key()})
+    _cookie(r, request, auth.make_session(), auth.MAX_AGE)  # du som bytte lösenord förblir inloggad
+    return r
+
+
+async def auth_new_key(request):
+    return JSONResponse({"enabled": auth.enabled(), "api_key": auth.new_api_key()})
+
+
+async def health(request):
+    return JSONResponse({"ok": True, "version": VERSION})
+
+
+PUBLIC = ("/api/login", "/api/health", "/static/", "/manifest.webmanifest", "/poster/", "/favicon")
+KEY_PATHS = ("/api/ha",)  # det API-nyckeln (Home Assistant) får läsa
+
+
+class AuthMiddleware:
+    """Släpper bara igenom inloggade när ett lösenord är satt. Utan lösenord: allt öppet, som förut."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http" or not auth.enabled():
+            return await self.app(scope, receive, send)
+        request = Request(scope)
+        path = scope["path"]
+        if path.startswith(PUBLIC) or auth.valid_session(request.cookies.get(auth.COOKIE)):
+            return await self.app(scope, receive, send)
+        key = request.headers.get("x-api-key") or request.headers.get("authorization", "").removeprefix("Bearer ").strip()
+        if path.startswith(KEY_PATHS) and request.method == "GET" and auth.valid_api_key(key):
+            return await self.app(scope, receive, send)
+        if path.startswith("/api/"):
+            response = JSONResponse({"detail": "Du behöver logga in", "login": True}, status_code=401)
+        else:
+            response = FileResponse(os.path.join(STATIC, "login.html"), headers={"Cache-Control": "no-cache"})
+        await response(scope, receive, send)
 
 
 # ---------- Inställningar ----------
@@ -445,6 +635,15 @@ async def settings_test(request):
         digital_state.update(result=r, last=date.today().isoformat())
         ok = isinstance(v, int)
         return JSONResponse({"ok": ok, "message": f"Hittade {v} titlar" if ok else str(v)})
+    if what in ("discogs", "musicbrainz"):
+        if what == "discogs" and not music.discogs_enabled():
+            return JSONResponse({"ok": False, "message": "Nyckel saknas"})
+        found = (await music.discogs_search(barcode="5708992012166") if what == "discogs"
+                 else await music.mb_by_barcode("5708992012166"))  # Ace of Base – The Bridge
+        if found:
+            background(music.enrich_all())
+            return JSONResponse({"ok": True, "message": f"Fungerar ({found[0]['artist']} – {found[0]['title']})"})
+        return JSONResponse({"ok": False, "message": "Fick inget svar – kontrollera nyckeln"})
     raise HTTPException(404, "Okänt test")
 
 
@@ -456,8 +655,8 @@ async def poster(request):
     local = await posters.fetch(path)
     if local:
         return FileResponse(local, headers={"Cache-Control": "public, max-age=2592000, immutable"})
-    if not posters.local_path(path):
-        raise HTTPException(404, "Ogiltigt omslag")
+    if not posters.local_path(path) or not posters.is_tmdb(path):
+        raise HTTPException(404, "Omslaget finns inte")
     return RedirectResponse(posters.remote_url(path))
 
 
@@ -489,6 +688,7 @@ async def lifespan(app):
     db.init()
     background(housekeeping())
     background(enrich.run())  # fortsätt där den slutade vid omstart
+    background(music.enrich_all())
     yield
     for t in list(_tasks):
         t.cancel()
@@ -540,14 +740,27 @@ routes = [
     Route("/api/collections", collections),
     Route("/api/collections/{coll_id:int}", collection),
     Route("/api/digital/sync", digital_sync, methods=["POST"]),
+    Route("/api/digital/only", digital_only),
+    Route("/api/music/barcode/{code}", music_barcode),
+    Route("/api/music/search", music_search),
+    Route("/api/music", music_add, methods=["POST"]),
+    Route("/api/music/manual", music_manual, methods=["POST"]),
     Route("/api/ha", home_assistant),
     Route("/api/backup", backup, methods=["POST"]),
     Route("/api/backups/{name}", backup_download),
+    Route("/api/restore", backup_restore, methods=["POST"]),
+    Route("/api/export", export),
     Route("/api/settings", settings_get),
     Route("/api/settings", settings_put, methods=["PUT"]),
     Route("/api/settings/test/{what}", settings_test, methods=["POST"]),
+    Route("/api/login", login, methods=["POST"]),
+    Route("/api/logout", logout, methods=["POST"]),
+    Route("/api/auth", auth_get),
+    Route("/api/auth", auth_put, methods=["PUT"]),
+    Route("/api/auth/apikey", auth_new_key, methods=["POST"]),
+    Route("/api/health", health),
     Mount("/static", StaticFiles(directory=STATIC), name="static"),
 ]
 
-app = Starlette(routes=routes, lifespan=lifespan,
+app = Starlette(routes=routes, lifespan=lifespan, middleware=[Middleware(AuthMiddleware)],
                 exception_handlers={HTTPException: http_error, Exception: server_error})

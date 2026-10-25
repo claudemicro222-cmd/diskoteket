@@ -1,0 +1,14 @@
+{
+  "domain": "diskoteket",
+  "name": "Diskoteket",
+  "codeowners": [],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "after_dependencies": ["frontend"],
+  "documentation": "https://github.com/claudemicro222-cmd/diskoteket",
+  "integration_type": "service",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/claudemicro222-cmd/diskoteket/issues",
+  "requirements": [],
+  "version": "4.0.0"
+}

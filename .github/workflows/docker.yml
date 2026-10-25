@@ -1,14 +1,18 @@
-# Bygger Docker-avbilden och publicerar den på GitHub Container Registry
+# Kör testerna och bygger sedan Docker-avbilden, som publiceras på GitHub Container Registry
 # vid varje ändring i main. Unraid hämtar sedan ghcr.io/claudemicro222-cmd/diskoteket:latest
+# Avbilden får också versionsnumret som tagg (t.ex. :4.0), så att man kan gå tillbaka till en version som fungerade.
 name: Bygg Docker-avbild
 
 on:
   push:
     branches: [main]
     tags: ["v*"]
-    paths-ignore:          # ändringar i bara dokumentation bygger ingen ny avbild
+    paths-ignore:          # ändringar i bara dokumentation, Unraid-mallen eller HA-integrationen bygger ingen ny avbild
       - "**.md"
       - "unraid/**"
+      - "custom_components/**"
+      - "hacs.json"
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,10 +20,27 @@ permissions:
   packages: write
 
 jobs:
-  build:
+  test:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt -r requirements-dev.txt
+      - name: Tester (uppgradering av gamla databaser, import, inloggning, återställning)
+        run: python -m pytest -q
+
+  build:
+    needs: test               # ingen ny avbild om testerna inte går igenom
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Versionsnummer från app/main.py
+        id: version
+        run: echo "version=$(sed -n 's/^VERSION = \"\(.*\)\"/\1/p' app/main.py)" >> "$GITHUB_OUTPUT"
 
       - uses: docker/setup-buildx-action@v3
 
@@ -37,6 +58,7 @@ jobs:
           images: ghcr.io/${{ github.repository }}
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=${{ steps.version.outputs.version }},enable={{is_default_branch}}
             type=ref,event=tag
             type=sha,format=short
 

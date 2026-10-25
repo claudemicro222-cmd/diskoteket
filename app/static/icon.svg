@@ -1,15 +1,48 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
   <defs>
-    <radialGradient id="g" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#ffe08a"/><stop offset=".55" stop-color="#f5b301"/><stop offset="1" stop-color="#b47f00"/></radialGradient>
-    <linearGradient id="s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#1c2130"/><stop offset="1" stop-color="#0a0c12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="54%" r="50%">
+      <stop offset="0" stop-color="#f5b301" stop-opacity=".28"/><stop offset="1" stop-color="#f5b301" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="disc" cx="42%" cy="36%" r="78%">
+      <stop offset="0" stop-color="#ffffff"/><stop offset=".45" stop-color="#d9dee8"/><stop offset="1" stop-color="#8d96a8"/>
+    </radialGradient>
+    <linearGradient id="iri1" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff5fa2"/><stop offset=".5" stop-color="#ffd84d"/><stop offset="1" stop-color="#4de1ff"/>
+    </linearGradient>
+    <linearGradient id="iri2" x1="1" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#7a5cff"/><stop offset=".5" stop-color="#4de1ff"/><stop offset="1" stop-color="#7dffb0"/>
+    </linearGradient>
+    <radialGradient id="label" cx="40%" cy="35%" r="70%">
+      <stop offset="0" stop-color="#ffe08a"/><stop offset=".6" stop-color="#f5b301"/><stop offset="1" stop-color="#c47f00"/>
+    </radialGradient>
+    <clipPath id="clip"><circle cx="256" cy="268" r="170"/></clipPath>
+    <filter id="soft" x="-20%" y="-20%" width="140%" height="140%"><feGaussianBlur stdDeviation="22"/></filter>
   </defs>
-  <rect width="512" height="512" rx="112" fill="#16181d"/>
-  <circle cx="256" cy="266" r="178" fill="url(#g)"/>
-  <path d="M256 88a178 178 0 0 1 154 89L256 266z" fill="url(#s)"/>
-  <circle cx="256" cy="266" r="120" fill="none" stroke="#16181d" stroke-opacity=".18" stroke-width="6"/>
-  <circle cx="256" cy="266" r="80" fill="none" stroke="#16181d" stroke-opacity=".14" stroke-width="5"/>
-  <circle cx="256" cy="266" r="44" fill="#16181d"/>
-  <circle cx="256" cy="266" r="16" fill="#f5b301"/>
-  <path d="M404 64l10 26 26 10-26 10-10 26-10-26-26-10 26-10z" fill="#fff"/>
-  <path d="M448 150l5 13 13 5-13 5-5 13-5-13-13-5 13-5z" fill="#fff" opacity=".8"/>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <circle cx="256" cy="276" r="210" fill="url(#glow)"/>
+  <!-- skivan -->
+  <circle cx="256" cy="268" r="170" fill="url(#disc)"/>
+  <g clip-path="url(#clip)">
+    <!-- regnbågsskimret som en riktig skiva har -->
+    <g filter="url(#soft)">
+      <path d="M256 268 L256 60 A208 208 0 0 1 436 164 Z" fill="url(#iri1)" opacity=".7"/>
+      <path d="M256 268 L76 372 A208 208 0 0 1 72 172 Z" fill="url(#iri2)" opacity=".6"/>
+      <path d="M256 268 L440 360 A208 208 0 0 1 330 460 Z" fill="url(#iri1)" opacity=".45"/>
+    </g>
+    <g fill="none" stroke="#1a1e28" stroke-opacity=".10" stroke-width="3">
+      <circle cx="256" cy="268" r="150"/><circle cx="256" cy="268" r="132"/><circle cx="256" cy="268" r="114"/><circle cx="256" cy="268" r="96"/>
+    </g>
+    <path d="M150 140 A170 170 0 0 1 300 104" fill="none" stroke="#fff" stroke-width="10" stroke-linecap="round" opacity=".7"/>
+  </g>
+  <circle cx="256" cy="268" r="170" fill="none" stroke="#000" stroke-opacity=".25" stroke-width="3"/>
+  <!-- etiketten med play-knapp -->
+  <circle cx="256" cy="268" r="74" fill="url(#label)"/>
+  <circle cx="256" cy="268" r="74" fill="none" stroke="#7a4d00" stroke-opacity=".35" stroke-width="3"/>
+  <path d="M236 232 L292 268 L236 304 Z" fill="#141720" stroke="#141720" stroke-width="10" stroke-linejoin="round"/>
+  <!-- gnistor -->
+  <path d="M418 62l9 24 24 9-24 9-9 24-9-24-24-9 24-9z" fill="#fff"/>
+  <path d="M462 140l5 12 12 5-12 5-5 12-5-12-12-5 12-5z" fill="#ffd77a"/>
 </svg>

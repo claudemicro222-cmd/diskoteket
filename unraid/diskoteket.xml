@@ -9,8 +9,8 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/claudemicro222-cmd/diskoteket/issues</Support>
   <Project>https://github.com/claudemicro222-cmd/diskoteket</Project>
-  <Overview>Egen film- och seriesamling. Mobilanpassad webbsida med streckkodsskanning, flera samlingar, import från CLZ, omslag från TMDB, utlåning, statistik och koppling till Plex/Jellyfin och Home Assistant. Allt sparas i appdata.</Overview>
-  <Category>MediaApp:Video Tools:</Category>
+  <Overview>Egen film-, serie- och musiksamling. Mobilanpassad webbsida med streckkodsskanning, flera samlingar, import från CLZ Movies och CLZ Music, omslag från TMDB och MusicBrainz, utlåning, statistik, valfri inloggning och koppling till Plex/Jellyfin och Home Assistant. Allt sparas i appdata. OBS: vibecodat – all kod är skriven av Claude (AI), inte av en professionell utvecklare.</Overview>
+  <Category>MediaApp:Video MediaApp:Music Tools:</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/claudemicro222-cmd/diskoteket/main/unraid/diskoteket.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/claudemicro222-cmd/diskoteket/main/unraid/icon.png</Icon>

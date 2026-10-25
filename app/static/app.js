@@ -30,6 +30,7 @@ async function api(path, opts = {}) {
   }
   const r = await fetch(path, opts);
   const data = await r.json().catch(() => ({}));
+  if (r.status === 401 && data.login) location.reload(); // utloggad – sidan visar inloggningen
   if (!r.ok) {
     const err = new Error(data.detail || r.statusText);
     err.status = r.status; err.data = data;
@@ -45,18 +46,33 @@ const currentLibId = () => (state.lib === "all" ? state.libs[0]?.id : state.lib)
 function poster(path, title, cls = "") {
   return path
     ? `<img class="poster ${cls}" loading="lazy" src="/poster${esc(path)}" alt="">`
-    : `<div class="poster none ${cls}"><span>${esc(title)}</span></div>`;
+    : `<div class="poster none ${cls}">${title ? `<span>${esc(title)}</span>` : ""}</div>`;
 }
+// Omslag från nätet (förslag vid sökning) – döljs tyst om bilden saknas
+const netCover = (url, cls = "thumb") => url
+  ? `<img class="poster ${cls}" loading="lazy" src="${esc(url)}" alt="" onerror="this.style.visibility='hidden'">`
+  : `<div class="poster none ${cls}"></div>`;
+
+const VARIOUS = ["various", "various artists", "va", "blandade artister"];
+const artistName = (a) => (a && VARIOUS.includes(a.trim().toLowerCase()) ? "Blandade artister" : a || "");
+const isMusic = (it) => it.kind === "music";
+const MUSIC_FORMATS = ["CD", "Vinyl", "Kassett", "SACD", "DVD-Audio", "Blu-ray", "Digital"];
+const lenText = (min) => (min >= 60 ? `${Math.floor(min / 60)} h ${min % 60} min` : `${min} min`);
 
 // ---------- Formatmärken ----------
 
 const DISC = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor" opacity=".9"/><circle cx="8" cy="8" r="2.2" fill="var(--fmt-bg, #000)"/><path d="M8 2.6a5.4 5.4 0 0 1 5.1 3.7" stroke="var(--fmt-bg,#000)" stroke-width="1" fill="none" opacity=".5"/></svg>`;
 const PLAY = `<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5v11l9.5-5.5z" fill="currentColor"/></svg>`;
 const TAPE = `<svg viewBox="0 0 16 16" aria-hidden="true"><rect x="1" y="3.5" width="14" height="9" rx="1.5" fill="currentColor"/><circle cx="5.2" cy="8" r="1.8" fill="var(--fmt-bg,#000)"/><circle cx="10.8" cy="8" r="1.8" fill="var(--fmt-bg,#000)"/></svg>`;
+const VINYL = `<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="7" fill="currentColor"/><circle cx="8" cy="8" r="4.6" fill="none" stroke="var(--fmt-bg,#000)" stroke-width=".6" opacity=".6"/><circle cx="8" cy="8" r="2.4" fill="#e0533c"/><circle cx="8" cy="8" r=".7" fill="var(--fmt-bg,#000)"/></svg>`;
 
 function formatInfo(format) {
   const f = (format || "").toLowerCase();
   const threeD = /3d/.test(f);
+  if (/vinyl|\blp\b|"/.test(f)) return { cls: "vinyl", label: "Vinyl", icon: VINYL };
+  if (/sacd/.test(f)) return { cls: "cd", label: "SACD", icon: DISC };
+  if (/^cd|\bcd\b/.test(f)) return { cls: "cd", label: "CD", icon: DISC };
+  if (/kassett|cassette/.test(f)) return { cls: "tape", label: "Kassett", icon: TAPE };
   if (/4k|uhd|ultra/.test(f)) return { cls: "uhd", label: "4K", icon: DISC, threeD };
   if (/blu/.test(f)) return { cls: "bd", label: "Blu-ray", icon: DISC, threeD };
   if (/hd.?dvd/.test(f)) return { cls: "bd", label: "HD DVD", icon: DISC, threeD };
@@ -74,9 +90,9 @@ function fmtBadge(format, extraCls = "") {
 }
 
 function listItem(it, right = "") {
-  return `<div class="list-item" data-id="${it.id ?? ""}">${poster(it.poster_path, "", "thumb")}
+  return `<div class="list-item" data-id="${it.id ?? ""}">${poster(it.poster_path, "", isMusic(it) ? "thumb square" : "thumb")}
     <div class="grow"><div class="li-title">${esc(it.title)}</div>
-    <div class="muted small li-sub">${it.year || ""} ${fmtBadge(it.format, "sm")} ${esc(it.location || "")}
+    <div class="muted small li-sub">${isMusic(it) ? esc(artistName(it.artist)) + " · " : ""}${it.year || ""} ${fmtBadge(it.format, "sm")} ${esc(it.location || "")}
     ${state.lib === "all" && it.library_id ? `<span class="lib-tag">${esc(libName(it.library_id))}</span>` : ""}</div></div>${right}</div>`;
 }
 function bindOpen(root = $("#sheet-body")) {
@@ -116,7 +132,7 @@ function applyTheme() {
   if (state.theme === "auto") delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = state.theme;
   const dark = state.theme === "dark" || (state.theme === "auto" && matchMedia("(prefers-color-scheme: dark)").matches);
-  $('meta[name="theme-color"]').content = dark ? "#14161a" : "#f4f1ea";
+  $('meta[name="theme-color"]').content = dark ? "#0b0d12" : "#f5f3ee";
 }
 matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", applyTheme);
 
@@ -229,11 +245,17 @@ function viewLibDelete(id) {
 
 // ---------- Rutnätet ----------
 
+// Varje flik har egna filter, eftersom musik har andra format och genrer än film
+const tabKind = () => ({ all: "video", movie: "movie", tv: "tv", music: "music" }[state.tab] || "");
+const musicTab = () => state.tab === "music";
+
 function query() {
-  const p = { q: state.q, field: state.field, sort: state.sort, format: state.format, genre: state.genre,
-    watched: state.watched, digital: state.digital };
+  const music = musicTab();
+  const p = { q: state.q, field: music && state.field !== "title" ? "all" : state.field,
+    sort: !music && state.sort === "artist" ? "title" : state.sort, format: state.format, genre: state.genre,
+    watched: music ? "" : state.watched, digital: music ? "" : state.digital };
   p.status = state.tab === "wish" ? "wish" : state.loaned ? "loaned" : "owned";
-  if (state.tab === "movie" || state.tab === "tv") p.kind = state.tab;
+  if (tabKind()) p.kind = tabKind();
   p.lib = state.lib === "all" ? "all" : state.lib;
   return new URLSearchParams(p);
 }
@@ -261,7 +283,7 @@ function buildCards() {
 function render() {
   const cards = buildCards();
   const grid = $("#grid");
-  grid.className = state.view;
+  grid.className = state.view + (musicTab() ? " music-grid" : "");
   const list = state.view === "list" || state.view === "compact";
   grid.innerHTML = cards.map((c, i) => (list ? rowHtml(c, i) : cardHtml(c, i))).join("");
   $$("#grid [data-i]").forEach((el) => {
@@ -269,14 +291,34 @@ function render() {
     el.onclick = () => (c.group ? show(viewSeries, c) : show(viewItem, c.id));
   });
   const n = state.items.length;
-  $("#count").textContent = `${n} ${n === 1 ? "titel" : "titlar"}${cards.length !== n ? ` · ${cards.length} kort` : ""}`;
+  const word = musicTab() ? (n === 1 ? "album" : "album") : n === 1 ? "titel" : "titlar";
+  $("#count").textContent = `${n} ${word}${cards.length !== n ? ` · ${cards.length} kort` : ""}`;
   const empty = $("#empty");
   empty.hidden = n > 0;
   empty.textContent = state.tab === "wish"
-    ? "Önskelistan är tom. Skanna eller sök en film och välj ”Önskelista”."
+    ? "Önskelistan är tom. Skanna eller sök en titel och välj ”Önskelista”."
     : activeFilterCount() || state.q ? "Inget matchade. Prova att ändra filtren."
-    : "Samlingen är tom. Öppna menyn ☰ och importera en CLZ-export, eller skanna din första film.";
+    : musicTab() ? "Ingen musik än. Öppna menyn och importera en export från CLZ Music, eller skanna din första skiva."
+    : "Samlingen är tom. Öppna menyn och importera en CLZ-export, eller skanna din första film.";
+  renderShelf();
   renderActiveFilters();
+}
+
+// "Nyligen tillagt" överst, som en hylla i en streamingtjänst. Bara när man bläddrar fritt.
+function renderShelf() {
+  const shelf = $("#shelf");
+  const browsing = !state.q && !activeFilterCount() && state.tab !== "wish" && state.sort === "title" && state.items.length > 12;
+  if (!browsing) { shelf.hidden = true; return; }
+  const seen = new Set();
+  const recent = [...state.items].filter((i) => i.added_date)
+    .sort((a, b) => b.added_date.localeCompare(a.added_date) || b.id - a.id)
+    .filter((i) => { const k = i.series_name || i.id; if (seen.has(k)) return false; seen.add(k); return true; })
+    .slice(0, 14);
+  if (recent.length < 4) { shelf.hidden = true; return; }
+  shelf.hidden = false;
+  shelf.innerHTML = `<div class="shelf-head"><h2>Nyligen tillagt</h2><span class="muted small">${recent[0].added_date}</span></div>
+    <div class="shelf-row">${recent.map((c) => cardHtml(c, "")).join("")}</div>`;
+  $$(".shelf-row .card", shelf).forEach((el, i) => (el.onclick = () => show(viewItem, recent[i].id)));
 }
 
 function seasonFormats(seasons) {
@@ -294,7 +336,14 @@ function cardHtml(c, i) {
       <span class="fmt-wrap">${fmtBadge(seasonFormats(c.seasons))}</span></div>
       <div class="t">${esc(c.name)}</div></div>`;
   }
-  return `<div class="card" data-i="${i}"><div class="pw ${c.watched ? "seen" : ""}">${poster(c.poster_path, c.title)}
+  const di = i === "" ? "" : `data-i="${i}"`;
+  if (isMusic(c)) {
+    return `<div class="card music" ${di}><div class="pw">${poster(c.poster_path, c.title, "square")}
+      ${c.loaned_to ? `<span class="badge tr warn">Utlånad</span>` : ""}
+      <span class="fmt-wrap">${fmtBadge(c.format)}</span></div>
+      <div class="t">${esc(c.title)}</div><div class="s">${esc(artistName(c.artist))}${c.year ? ` · ${c.year}` : ""}</div></div>`;
+  }
+  return `<div class="card" ${di}><div class="pw ${c.watched ? "seen" : ""}">${poster(c.poster_path, c.title)}
     ${c.loaned_to ? `<span class="badge tr warn">Utlånad</span>` : ""}
     ${c.digital ? `<span class="badge tl dig">▶</span>` : ""}
     <span class="fmt-wrap">${fmtBadge(c.format)}</span></div>
@@ -306,31 +355,32 @@ function rowHtml(c, i) {
   const title = c.group ? c.name : c.title;
   const sub = c.group
     ? `${c.seasons.length} ${c.seasons.length === 1 ? "säsong" : "säsonger"}`
-    : [c.year, c.location].filter(Boolean).map(esc).join(" · ");
+    : [isMusic(c) && artistName(c.artist), c.year, c.location].filter(Boolean).map(esc).join(" · ");
   const fmt = fmtBadge(c.group ? seasonFormats(c.seasons) : c.format, "sm");
   const flags = [c.loaned_to && `<span class="flag warn">Utlånad</span>`, c.watched && `<span class="flag ok">✓</span>`,
     (c.digital || c.seasons?.some((s) => s.digital)) && `<span class="flag dig">▶</span>`].filter(Boolean).join("");
   const lib = state.lib === "all" ? `<span class="lib-tag">${esc(libName(c.library_id))}</span>` : "";
   if (compact) {
-    return `<div class="row-c" data-i="${i}"><span class="grow ellip">${esc(title)}</span>
+    return `<div class="row-c" data-i="${i}"><span class="grow ellip">${isMusic(c) ? `<span class="muted">${esc(artistName(c.artist))} – </span>` : ""}${esc(title)}</span>
       <span class="muted small">${c.group ? sub : c.year || ""}</span>${flags}${fmt}</div>`;
   }
   const p = c.group ? (c.seasons.find((s) => s.poster_path) || c.seasons[0]).poster_path : c.poster_path;
-  return `<div class="row-l" data-i="${i}">${poster(p, "", "thumb")}
+  return `<div class="row-l" data-i="${i}">${poster(p, "", isMusic(c) ? "thumb square" : "thumb")}
     <div class="grow"><div class="li-title">${esc(title)}</div><div class="muted small">${sub} ${lib}</div>
     <div class="row-flags">${fmt}${flags}</div></div></div>`;
 }
 
+const filterKeys = () => (musicTab() ? ["format", "genre"] : ["format", "genre", "watched", "digital"]);
 function activeFilterCount() {
-  return ["format", "genre", "watched", "digital"].filter((k) => state[k]).length + (state.loaned ? 1 : 0);
+  return filterKeys().filter((k) => state[k]).length + (state.loaned ? 1 : 0);
 }
 
 function renderActiveFilters() {
   const labels = [];
   if (state.format) labels.push(["format", state.format]);
   if (state.genre) labels.push(["genre", state.genre]);
-  if (state.watched) labels.push(["watched", state.watched === "1" ? "Sedda" : "Osedda"]);
-  if (state.digital) labels.push(["digital", state.digital === "yes" ? "Finns digitalt" : "Bara fysiskt"]);
+  if (state.watched && !musicTab()) labels.push(["watched", state.watched === "1" ? "Sedda" : "Osedda"]);
+  if (state.digital && !musicTab()) labels.push(["digital", state.digital === "yes" ? "Finns digitalt" : "Bara fysiskt"]);
   if (state.loaned) labels.push(["loaned", "Utlånade"]);
   $("#active-filters").innerHTML = labels.map(([k, v]) => `<button class="chip" data-k="${k}">${esc(v)} ✕</button>`).join("");
   $$("#active-filters .chip").forEach((b) => (b.onclick = () => {
@@ -340,6 +390,8 @@ function renderActiveFilters() {
   const n = activeFilterCount();
   $("#btn-filter").textContent = n ? `Filter (${n})` : "Filter";
   $("#btn-filter").classList.toggle("on", n > 0 || state.sort !== "title");
+  $("#q").placeholder = musicTab() ? "Sök album eller artist…" : FIELD_HINT[state.field];
+  $("#q-field").hidden = musicTab();
 }
 
 function saveFilters() {
@@ -347,9 +399,10 @@ function saveFilters() {
   store.set("filters", { sort, format, genre, watched, digital, loaned });
 }
 
-async function facets(fresh = false) {
-  if (!state.facets || fresh) state.facets = await api(`/api/facets?${libParam()}`);
-  return state.facets;
+async function facets(fresh = false, kind = musicTab() ? "music" : "video") {
+  state.facets = state.facets || {};
+  if (!state.facets[kind] || fresh) state.facets[kind] = await api(`/api/facets?${libParam()}&kind=${kind}`);
+  return state.facets[kind];
 }
 
 // ---------- Bottenarket med bakåtknapp ----------
@@ -395,24 +448,31 @@ const libOptions = (cur) => state.libs.map((l) => option(l.id, l.name, cur)).joi
 
 async function viewFilter() {
   const f = await facets();
+  const music = musicTab();
   const sel = (id, label, opts, cur) => `<label>${label}<select id="${id}">${opts.map(([v, l]) => option(v, l, cur)).join("")}</select></label>`;
+  const sorts = music
+    ? [["title", "Titel A–Ö"], ["artist", "Artist A–Ö"], ["added", "Senast tillagd"], ["year", "År (nyast först)"],
+      ["year_asc", "År (äldst först)"], ["rating", "Mitt betyg"], ["price", "Inköpspris"]]
+    : [["title", "Titel A–Ö"], ["added", "Senast tillagd"], ["year", "År (nyast först)"],
+      ["year_asc", "År (äldst först)"], ["rating", "Mitt betyg"], ["imdb", "IMDb-betyg"], ["runtime", "Längd (kortast först)"],
+      ["price", "Inköpspris"]];
   openSheet(`
     <h2>Filter och sortering</h2>
+    <p class="muted small">${music ? "Gäller fliken Musik" : "Gäller filmer och serier"}</p>
     <div class="form">
-      ${sel("f-sort", "Sortera", [["title", "Titel A–Ö"], ["added", "Senast tillagd"], ["year", "År (nyast först)"],
-        ["year_asc", "År (äldst först)"], ["rating", "Mitt betyg"], ["imdb", "IMDb-betyg"], ["runtime", "Längd (kortast först)"]], state.sort)}
+      ${sel("f-sort", "Sortera", sorts, state.sort)}
       ${sel("f-format", "Format", [["", "Alla format"], ...f.formats.map((x) => [x, x])], state.format)}
       ${sel("f-genre", "Genre", [["", "Alla genrer"], ...f.genres.map((x) => [x, x])], state.genre)}
-      ${sel("f-watched", "Sedd", [["", "Alla"], ["0", "Osedda"], ["1", "Sedda"]], state.watched)}
-      ${f.digital ? sel("f-digital", "Plex/Jellyfin", [["", "Alla"], ["yes", "Finns digitalt"], ["no", "Bara fysiskt"]], state.digital) : ""}
+      ${music ? "" : sel("f-watched", "Sedd", [["", "Alla"], ["0", "Osedda"], ["1", "Sedda"]], state.watched)}
+      ${f.digital && !music ? sel("f-digital", "Plex/Jellyfin", [["", "Alla"], ["yes", "Finns digitalt"], ["no", "Bara fysiskt"]], state.digital) : ""}
       <label class="check"><input type="checkbox" id="f-loaned" ${state.loaned ? "checked" : ""}> Visa bara utlånade</label>
     </div>
     <button class="btn primary" id="f-apply">Visa</button>
     <button class="btn" id="f-reset">Nollställ</button>`);
   $("#f-apply").onclick = () => {
     state.sort = $("#f-sort").value; state.format = $("#f-format").value; state.genre = $("#f-genre").value;
-    state.watched = $("#f-watched").value;
-    state.digital = $("#f-digital")?.value || ""; state.loaned = $("#f-loaned").checked;
+    if (!music) { state.watched = $("#f-watched").value; state.digital = $("#f-digital")?.value || ""; }
+    state.loaned = $("#f-loaned").checked;
     saveFilters(); closeSheet(); load();
   };
   $("#f-reset").onclick = () => { Object.assign(state, DEFAULT_FILTERS); saveFilters(); closeSheet(); load(); };
@@ -430,19 +490,54 @@ function viewSeries(group) {
   bindOpen();
 }
 
+// Omslagets färg blir detaljvyns tonfärg (fungerar eftersom omslagen kommer från samma server)
+function tintFromPoster() {
+  const img = $("#sheet .detail > img.poster");
+  const hero = $("#sheet .hero");
+  if (!img || !hero) return;
+  const apply = () => {
+    try {
+      const c = document.createElement("canvas");
+      c.width = c.height = 12;
+      const g = c.getContext("2d");
+      g.drawImage(img, 0, 0, 12, 12);
+      const d = g.getImageData(0, 0, 12, 12).data;
+      let r = 0, gg = 0, b = 0, n = 0;
+      for (let i = 0; i < d.length; i += 4) {
+        const max = Math.max(d[i], d[i + 1], d[i + 2]), min = Math.min(d[i], d[i + 1], d[i + 2]);
+        const w = 1 + (max - min) / 40; // mättade färger väger tyngre än grått
+        r += d[i] * w; gg += d[i + 1] * w; b += d[i + 2] * w; n += w;
+      }
+      hero.style.setProperty("--tint", `rgb(${(r / n) | 0}, ${(gg / n) | 0}, ${(b / n) | 0})`);
+    } catch { /* bilden gick inte att läsa – behåll standardfärgen */ }
+  };
+  if (img.complete && img.naturalWidth) apply(); else img.addEventListener("load", apply, { once: true });
+}
+
+function heroHtml(it, subtitle) {
+  return `<div class="hero">${it.poster_path ? `<div class="hero-bg" style="background-image:url('/poster${esc(it.poster_path)}')"></div>` : ""}
+    <h2>${esc(it.title)}</h2>${subtitle ? `<div class="sub">${subtitle}</div>` : ""}
+    <div class="detail">${poster(it.poster_path, it.title, isMusic(it) ? "square" : "")}<div class="facts" id="facts"></div></div></div>`;
+}
+
+function loanNotice(it) {
+  const overdue = it.loaned_to && it.due_date && it.due_date < today();
+  return (isWish(it) ? `<div class="notice star">★ På önskelistan</div>` : "") +
+    (it.loaned_to ? `<div class="notice ${overdue ? "bad" : "warn"}">Utlånad till <b>${esc(it.loaned_to)}</b>
+      ${it.loan_date ? ` sedan ${esc(it.loan_date)}` : ""}${it.due_date ? ` · åter ${esc(it.due_date)}${overdue ? " (försenad!)" : ""}` : ""}</div>` : "");
+}
+
 async function viewItem(id) {
   const it = await api(`/api/items/${id}`);
+  if (isMusic(it)) return viewAlbum(it);
   const x = it.extra || {};
   const wish = isWish(it);
-  const overdue = it.loaned_to && it.due_date && it.due_date < today();
   const fact = (label, v) => (v ? `<div><b>${label}:</b> ${esc(v)}</div>` : "");
+  const sub = [it.year, it.runtime && lenText(it.runtime), it.kind === "tv" ? "Serie" : null, pipe(it.genres)].filter(Boolean).map(esc).join(" · ");
   openSheet(`
-    <h2>${esc(it.title)}</h2>
-    ${wish ? `<div class="notice star">★ På önskelistan</div>` : ""}
-    ${it.loaned_to ? `<div class="notice ${overdue ? "bad" : "warn"}">Utlånad till <b>${esc(it.loaned_to)}</b>
-      ${it.loan_date ? ` sedan ${esc(it.loan_date)}` : ""}${it.due_date ? ` · åter ${esc(it.due_date)}${overdue ? " (försenad!)" : ""}` : ""}</div>` : ""}
-    <div class="detail">${poster(it.poster_path, it.title)}
-      <div class="facts">
+    ${heroHtml(it, sub)}
+    ${loanNotice(it)}`);
+  $("#facts").innerHTML = `
         ${it.format ? `<div class="fmt-line">${fmtBadge(it.format)}</div>` : ""}
         ${fact("År", it.year)}${fact("Utgåva", it.edition)}
         ${fact("Längd", it.runtime && `${it.runtime} min`)}${fact("Genre", pipe(it.genres))}
@@ -452,8 +547,8 @@ async function viewItem(id) {
         ${fact("Inköpt", [it.purchase_price && `${it.purchase_price} kr`, x["Purchase Date"]].filter(Boolean).join(", "))}
         ${state.libs.length > 1 ? fact("Samling", it.library_name) : ""}
         ${it.digital_sources?.length ? `<div><b>Digitalt:</b> ${it.digital_sources.map((s) => s === "plex" ? "Plex" : "Jellyfin").join(", ")} ▶</div>` : ""}
-        ${it.collection_name ? `<div><b>Filmserie:</b> <a href="#" id="b-coll">${esc(it.collection_name)}</a></div>` : ""}
-      </div></div>
+        ${it.collection_name ? `<div><b>Filmserie:</b> <a href="#" id="b-coll">${esc(it.collection_name)}</a></div>` : ""}`;
+  $("#sheet-body").insertAdjacentHTML("beforeend", `
     ${it.actors ? `<h3>Skådespelare</h3><div class="plot">${esc(pipe(it.actors))}</div>` : ""}
     ${it.plot ? `<h3>Handling</h3><div class="plot">${esc(it.plot)}</div>` : ""}
     ${it.notes ? `<h3>Anteckningar</h3><div class="plot">${esc(it.notes)}</div>` : ""}
@@ -470,6 +565,7 @@ async function viewItem(id) {
       <button class="btn danger" id="b-del">Ta bort</button>
     </div>
     ${it.locked?.length ? `<p class="muted small">Ändrat av dig (skrivs inte över): ${it.locked.map(fieldName).join(", ")}</p>` : ""}`);
+  tintFromPoster();
   const done = async (msg) => { if (msg) toast(msg); refresh(); load(); };
   $("#b-watched") && ($("#b-watched").onclick = async () => { await patch(id, { watched: it.watched ? 0 : 1 }); done(); });
   $("#b-bought") && ($("#b-bought").onclick = async () => {
@@ -492,11 +588,290 @@ async function viewItem(id) {
   };
 }
 
+// ---------- Musik: album ----------
+
+function tracklistHtml(list, albumArtist = "") {
+  if (!list?.length) return "";
+  const same = (a) => (a || "").toLowerCase() === (albumArtist || "").toLowerCase(); // artist per spår bara på samlingsskivor
+  const discs = new Set(list.map((t) => t.disc || 1));
+  let out = "", disc = null;
+  for (const t of list) {
+    if (discs.size > 1 && t.disc !== disc) { disc = t.disc; out += `${out ? "</ol>" : ""}<div class="disc-head">Skiva ${disc}</div><ol class="tracklist">`; }
+    else if (!out) out = `<ol class="tracklist">`;
+    out += `<li><span class="n">${esc(t.pos || "")}</span><span class="grow">${esc(t.title)}${t.artist && !same(t.artist) ? `<div class="ta">${esc(t.artist)}</div>` : ""}</span>
+      <span class="len">${esc(t.length || "")}</span></li>`;
+  }
+  return `<h3>Låtlista</h3>${out}</ol>`;
+}
+
+function viewAlbum(it) {
+  const fact = (label, v) => (v ? `<div><b>${label}:</b> ${esc(v)}</div>` : "");
+  const sub = `<b>${esc(artistName(it.artist) || "Okänd artist")}</b>${it.year ? ` · ${it.year}` : ""}`;
+  openSheet(`${heroHtml(it, sub)}${loanNotice(it)}`);
+  $("#facts").innerHTML = `
+    ${it.format ? `<div class="fmt-line">${fmtBadge(it.format)}</div>` : ""}
+    ${fact("Skivbolag", it.label)}${fact("Katalognr", it.cat_no)}
+    ${fact("Skivor", it.nr_discs > 1 ? it.nr_discs : null)}${fact("Spår", it.tracks)}
+    ${fact("Speltid", it.runtime && lenText(it.runtime))}${fact("Genre", pipe(it.genres))}
+    ${fact("Mitt betyg", it.my_rating)}${fact("Plats", it.location)}${fact("Streckkod", it.barcode)}
+    ${fact("Inköpt", it.purchase_price && `${it.purchase_price} kr`)}
+    ${state.libs.length > 1 ? fact("Samling", it.library_name) : ""}`;
+  const wish = isWish(it);
+  $("#sheet-body").insertAdjacentHTML("beforeend", `
+    ${tracklistHtml(it.tracklist, it.artist)}
+    ${!it.tracklist?.length && it.enriched === 0 ? `<p class="muted small">Låtlistan hämtas i bakgrunden…</p>` : ""}
+    ${it.notes ? `<h3>Anteckningar</h3><div class="plot">${esc(it.notes)}</div>` : ""}
+    <div class="actions">
+      ${wish ? `<button class="btn primary" id="b-bought">Köpt! Flytta till samlingen</button>`
+        : it.loaned_to ? `<button class="btn primary" id="b-return">Återlämnad</button>` : `<button class="btn" id="b-loan">Låna ut</button>`}
+      <button class="btn" id="b-edit">Redigera</button>
+      <button class="btn" id="b-refresh">Hämta info igen</button>
+      <button class="btn" id="b-own">Eget omslag</button>
+      <button class="btn" id="b-rematch">Fel album?</button>
+      ${it.mbid ? `<a class="btn" href="https://musicbrainz.org/release/${esc(it.mbid)}" target="_blank" rel="noopener">MusicBrainz</a>` : ""}
+      ${it.discogs_id ? `<a class="btn" href="https://www.discogs.com/release/${esc(it.discogs_id)}" target="_blank" rel="noopener">Discogs</a>` : ""}
+      <button class="btn danger" id="b-del">Ta bort</button>
+    </div>
+    ${it.locked?.length ? `<p class="muted small">Ändrat av dig (skrivs inte över): ${it.locked.map(fieldName).join(", ")}</p>` : ""}`);
+  tintFromPoster();
+  const done = (msg) => { if (msg) toast(msg); refresh(); load(); };
+  $("#b-bought") && ($("#b-bought").onclick = async () => {
+    await patch(it.id, { collection_status: "In Collection", added_date: today() }); done("Flyttad till samlingen");
+  });
+  $("#b-return") && ($("#b-return").onclick = async () => {
+    await patch(it.id, { loaned_to: null, loan_date: null, due_date: null }); done("Markerad som återlämnad");
+  });
+  $("#b-loan") && ($("#b-loan").onclick = () => show(viewLoan, it));
+  $("#b-edit").onclick = () => show(viewAlbumEdit, it);
+  $("#b-own").onclick = () => show(viewOwnCover, it);
+  $("#b-rematch").onclick = () => show(viewMusicRematch, it);
+  $("#b-refresh").onclick = async (e) => {
+    e.target.disabled = true; e.target.textContent = "Hämtar…";
+    try {
+      await api(`/api/items/${it.id}/refresh`, { method: "POST", json: {} });
+      done("Info hämtad");
+    } catch (err) { toast(esc(err.message), "bad"); e.target.disabled = false; e.target.textContent = "Hämta info igen"; }
+  };
+  $("#b-del").onclick = async () => {
+    if (!confirm(`Ta bort "${it.title}"?`)) return;
+    await api(`/api/items/${it.id}`, { method: "DELETE" });
+    back(); load(); toast("Borttagen");
+  };
+}
+
+async function viewAlbumEdit(it) {
+  const f = await facets(false, "music");
+  const field = (k, label, type = "text", extra = "") =>
+    `<label>${label}<input data-f="${k}" type="${type}" value="${esc(it[k] ?? "")}" ${extra}></label>`;
+  openSheet(`
+    <h2>Redigera album</h2>
+    <div class="form">
+      ${field("title", "Titel")}
+      ${field("artist", "Artist", "text", 'placeholder="Various = samlingsskiva"')}
+      <div class="two">${field("year", "År", "number")}${field("format", "Format", "text", 'list="e-formats"')}</div>
+      <datalist id="e-formats">${[...new Set([...MUSIC_FORMATS, ...f.formats])].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <div class="two">${field("label", "Skivbolag")}${field("cat_no", "Katalognummer")}</div>
+      <div class="two">${field("nr_discs", "Antal skivor", "number")}${field("tracks", "Antal spår", "number")}</div>
+      ${field("genres", "Genre (flera med | emellan)")}
+      <div class="two">${field("barcode", "Streckkod", "text", 'inputmode="numeric"')}${field("location", "Plats", "text", 'list="e-locs"')}</div>
+      <datalist id="e-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <div class="two">${field("my_rating", "Mitt betyg (0–10)", "number", 'step="0.5" min="0" max="10"')}${field("purchase_price", "Inköpspris (kr)", "number", 'step="0.01"')}</div>
+      <div class="two">
+        <label>Status<select data-f="collection_status">
+          ${option("In Collection", "I samlingen", it.collection_status || "In Collection")}
+          ${option("On Wish List", "Önskelista", it.collection_status)}
+          ${option("Sold", "Såld", it.collection_status)}</select></label>
+        ${state.libs.length > 1 ? `<label>Samling<select data-f="library_id">${libOptions(it.library_id)}</select></label>` : ""}
+      </div>
+      <label>Anteckningar<textarea data-f="notes" rows="3">${esc(it.notes || "")}</textarea></label>
+    </div>
+    <button class="btn primary" id="e-save">Spara</button>`);
+  $("#e-save").onclick = () => saveEdits(it);
+}
+
+async function saveEdits(it) {
+  const changes = {};
+  for (const el of $$("[data-f]", $("#sheet-body"))) {
+    const before = String(it[el.dataset.f] ?? "");
+    if (el.value !== before) changes[el.dataset.f] = el.value; // skicka bara det som ändrats
+  }
+  if (Object.keys(changes).length) await patch(it.id, changes);
+  state.facets = null;
+  toast("Sparat");
+  if (changes.library_id) await loadLibs();
+  back(); load();
+}
+
+function musicCandidate(c, i) {
+  return `<div class="list-item" data-i="${i}">${netCover(c.cover, "thumb square")}
+    <div class="grow"><div class="li-title">${esc(c.title)}</div>
+    <div class="muted small">${esc(artistName(c.artist))}${c.year ? ` · ${c.year}` : ""}${c.format ? ` · ${esc(c.format)}${c.nr_discs > 1 ? ` ×${c.nr_discs}` : ""}` : ""}${c.country ? ` · ${esc(c.country)}` : ""}</div>
+    <div class="muted small">${[c.label, c.cat_no].filter(Boolean).map(esc).join(" · ")} <span class="lib-tag">${esc(c.source)}</span></div></div>
+    <span class="plus">＋</span></div>`;
+}
+
+function viewMusicRematch(it) {
+  openSheet(`
+    <h2>Välj rätt album</h2>
+    <p class="muted">${esc(artistName(it.artist))} – ${esc(it.title)}${it.year ? ` (${it.year})` : ""}</p>
+    <div class="form"><div class="two">
+      <label>Artist<input id="mr-artist" type="text" value="${esc(VARIOUS.includes((it.artist || "").toLowerCase()) ? "" : it.artist || "")}"></label>
+      <label>Album<input id="mr-title" type="text" value="${esc(it.title)}"></label></div></div>
+    <button class="btn primary" id="mr-go">Sök</button>
+    <div id="results"></div>`);
+  const run = async () => {
+    $("#results").innerHTML = `<p class="muted">Söker…</p>`;
+    try {
+      const p = new URLSearchParams({ q: $("#mr-title").value, artist: $("#mr-artist").value });
+      const list = await api(`/api/music/search?${p}`);
+      $("#results").innerHTML = list.length ? list.map(musicCandidate).join("") : `<p class="muted">Inga träffar.</p>`;
+      $$("#results .list-item").forEach((el) => (el.onclick = async () => {
+        const c = list[el.dataset.i];
+        el.style.opacity = 0.5;
+        try {
+          await api(`/api/items/${it.id}/rematch`, { method: "POST", json: { source: c.source, id: c.mbid || c.discogs_id } });
+          toast("Kopplad till rätt album", "ok");
+          back(); load();
+        } catch (e) { el.style.opacity = 1; toast(esc(e.message), "bad"); }
+      }));
+    } catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
+  $("#mr-go").onclick = run;
+  $("#mr-title").onkeydown = (e) => e.key === "Enter" && run();
+  run();
+}
+
+async function viewMusicCode(code) {
+  openSheet(`<h2>Streckkod ${esc(code)}</h2><p class="muted">Letar i dina samlingar, MusicBrainz och fler källor…</p>`);
+  let r;
+  try { r = await api(`/api/music/barcode/${code}?lib=${scanLib()}`); }
+  catch (e) { return openSheet(`<h2>Streckkod ${esc(code)}</h2><div class="notice bad">Kunde inte slå upp streckkoden: ${esc(e.message)}</div>`); }
+  if (r.existing.length) return showExisting(code, r.existing);
+  viewMusicAdd({ barcode: code, candidates: r.candidates, match: r.match, productTitle: r.product_title, tried: r.tried });
+}
+
+// Lägg till musik: bästa träff från streckkoden, eller sök på artist/album
+async function viewMusicAdd({ query = "", artist = "", barcode = null, candidates = null, productTitle = null, match = null, tried = [] }) {
+  const f = await facets(false, "music");
+  const last = store.get("lastMusicAdd", { format: "CD", location: "" });
+  const keep = store.get("keepAdding", false);
+  let head = "";
+  if (barcode && match) {
+    head = `<div class="best">${netCover(match.cover, "square")}
+      <div class="grow"><div class="muted small">Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}</div>
+        <h3>${esc(match.title)}</h3>
+        <div class="muted">${esc(artistName(match.artist))}${match.year ? ` · ${match.year}` : ""}${match.label ? ` · ${esc(match.label)}` : ""}</div>
+        <button class="btn primary" id="b-best">＋ Lägg till</button></div></div>
+      ${candidates?.length > 1 ? `<p class="muted small">Flera utgåvor har samma streckkod – välj en annan nedan om det behövs.</p>` : `<p class="muted small">Inte rätt skiva? Sök nedan.</p>`}`;
+  } else if (barcode) {
+    head = `<div class="notice">Streckkod ${esc(barcode)}${productTitle ? `<br><span class="muted">Hittade: ${esc(productTitle)}</span>`
+      : `<br><span class="muted">Okänd streckkod${tried.length ? ` (letade i ${esc(tried.join(", "))})` : ""} – sök på artist och album nedan.</span>`}
+      <div><a class="btn small web" href="https://www.discogs.com/search/?q=${encodeURIComponent(barcode)}&type=release" target="_blank" rel="noopener">Sök på Discogs ↗</a></div></div>`;
+  }
+  openSheet(`
+    <h2>${barcode ? (match ? "Hittad!" : "Ny skiva") : "Lägg till musik"}</h2>
+    ${addedThisRound ? `<div class="added-count">✓ ${addedThisRound} tillagda ${queue().length && barcode ? `· ${queue().length} kvar i kön` : ""}</div>` : ""}
+    ${head}
+    <div class="form"><div class="two">
+      <label>Artist<input id="ma-artist" type="text" value="${esc(artist)}" placeholder="Valfritt"></label>
+      <label>Album<input id="ma-title" type="text" value="${esc(query)}"></label></div></div>
+    <button class="btn primary" id="b-ms">Sök</button>
+    <div class="row">
+      <select id="fmt">${[...new Set([...MUSIC_FORMATS, ...f.formats])].map((x) => option(x, x, match?.format || last.format)).join("")}</select>
+      <input id="loc" type="text" list="m-locs" placeholder="Plats" value="${esc(last.location)}">
+      <datalist id="m-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+    </div>
+    ${state.libs.length > 1 ? `<select id="add-lib">${libOptions(scanLib())}</select>` : ""}
+    <label class="check"><input type="checkbox" id="wish"> ★ Lägg på önskelistan i stället</label>
+    <label class="check"><input type="checkbox" id="keep" ${keep ? "checked" : ""}> Fortsätt lägga till fler efter den här</label>
+    <div id="results"></div>
+    <p class="small"><a href="#" id="b-manual-album">Finns inte? Lägg till skivan för hand ›</a></p>
+    ${addedThisRound ? `<button class="btn" id="b-done">Klar</button>` : ""}`);
+  $("#keep").onchange = (e) => store.set("keepAdding", e.target.checked);
+  $("#b-best") && ($("#b-best").onclick = (e) => addAlbum(match, barcode, e.target.closest(".best")));
+  $("#b-done") && ($("#b-done").onclick = () => { addedThisRound = 0; closeSheet(); });
+  $("#b-manual-album").onclick = (e) => {
+    e.preventDefault();
+    show(viewMusicManual, { title: $("#ma-title").value, artist: $("#ma-artist").value, barcode, format: $("#fmt").value });
+  };
+  const renderList = (list) => {
+    $("#results").innerHTML = list.length ? list.map(musicCandidate).join("") : `<p class="muted">Inga träffar. Prova en annan stavning.</p>`;
+    $$("#results .list-item").forEach((el) => (el.onclick = () => addAlbum(list[el.dataset.i], barcode, el)));
+  };
+  $("#b-ms").onclick = async () => {
+    if (!$("#ma-title").value.trim()) return $("#ma-title").focus();
+    $("#results").innerHTML = `<p class="muted">Söker…</p>`;
+    try { renderList(await api(`/api/music/search?${new URLSearchParams({ q: $("#ma-title").value, artist: $("#ma-artist").value })}`)); }
+    catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
+  for (const id of ["#ma-title", "#ma-artist"]) $(id).onkeydown = (e) => e.key === "Enter" && $("#b-ms").onclick();
+  if (candidates?.length && (!match || candidates.length > 1)) renderList(match ? candidates.slice(1) : candidates);
+  else if (query && !match) $("#b-ms").onclick();
+  if (!barcode && !query) $("#ma-title").focus();
+}
+
+async function addAlbum(c, barcode, el, force = false) {
+  const wish = $("#wish").checked, keep = $("#keep").checked;
+  const body = { source: c.source, id: c.mbid || c.discogs_id, barcode, format: $("#fmt").value, wish, force,
+    location: $("#loc").value.trim() || null, library_id: +($("#add-lib")?.value || scanLib()) };
+  store.set("lastMusicAdd", { format: body.format, location: body.location || "" });
+  el.style.opacity = 0.5;
+  try {
+    const item = await api("/api/music", { method: "POST", json: body });
+    if (barcode) removeFromQueue(barcode);
+    state.facets = null;
+    load();
+    toast(`${wish ? "★ Önskad" : "✓ Tillagd"}: <b>${esc(item.title)}</b>`, "ok");
+    if (!keep) { addedThisRound = 0; stack = []; return show(viewItem, item.id); }
+    addedThisRound++;
+    if (barcode) return nextAfterAdd(barcode);
+    stack[stack.length - 1] = [viewMusicAdd, [{}]];
+    viewMusicAdd({});
+  } catch (e) {
+    el.style.opacity = 1;
+    if (e.status === 409) {
+      const list = e.data.exists.map((x) => `• ${x.title} (${x.format || "?"}${isWish(x) ? ", önskelista" : ""})`).join("\n");
+      if (confirm(`Finns redan i samlingen:\n${list}\n\nLägga till ändå?`)) addAlbum(c, barcode, el, true);
+    } else alert(e.message);
+  }
+}
+
+async function viewMusicManual(pre = {}) {
+  const f = await facets(false, "music");
+  openSheet(`
+    <h2>Lägg till skiva för hand</h2>
+    <p class="muted small">För skivor som inte finns i MusicBrainz eller Discogs. Du kan lägga till ett eget omslag efteråt.</p>
+    <div class="form">
+      <label>Artist<input id="mm-artist" type="text" value="${esc(pre.artist || "")}" placeholder="Various = samlingsskiva"></label>
+      <label>Album<input id="mm-title" type="text" value="${esc(pre.title || "")}"></label>
+      <div class="two"><label>År<input id="mm-year" type="number"></label>
+        <label>Format<select id="mm-format">${[...new Set([...MUSIC_FORMATS, ...f.formats])].map((x) => option(x, x, pre.format || "CD")).join("")}</select></label></div>
+      <div class="two"><label>Skivbolag<input id="mm-label" type="text"></label><label>Streckkod<input id="mm-barcode" type="text" inputmode="numeric" value="${esc(pre.barcode || "")}"></label></div>
+      <label>Plats<input id="mm-loc" type="text" list="mm-locs"></label>
+      <datalist id="mm-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      ${state.libs.length > 1 ? `<label>Samling<select id="mm-lib">${libOptions(scanLib())}</select></label>` : ""}
+      <label class="check"><input type="checkbox" id="mm-wish"> ★ Lägg på önskelistan</label>
+    </div>
+    <button class="btn primary" id="mm-save">Lägg till</button>`);
+  $("#mm-save").onclick = async () => {
+    if (!$("#mm-title").value.trim()) return $("#mm-title").focus();
+    const item = await api("/api/music/manual", { method: "POST", json: {
+      title: $("#mm-title").value, artist: $("#mm-artist").value, year: $("#mm-year").value, format: $("#mm-format").value,
+      label: $("#mm-label").value, barcode: $("#mm-barcode").value || pre.barcode, location: $("#mm-loc").value,
+      wish: $("#mm-wish").checked, library_id: +($("#mm-lib")?.value || scanLib()) } });
+    if (pre.barcode) removeFromQueue(pre.barcode);
+    toast(`✓ Tillagd: <b>${esc(item.title)}</b>`, "ok");
+    state.facets = null; load();
+    stack = []; show(viewItem, item.id);
+  };
+}
+
 const FIELD_NAMES = { title: "titel", year: "år", poster_path: "omslag", plot: "handling", series_name: "serienamn",
   season: "säsong", location: "plats", format: "format", edition: "utgåva", notes: "anteckningar", my_rating: "betyg",
   watched: "sedd", barcode: "streckkod", purchase_price: "pris", collection_status: "status", genres: "genre",
   actors: "skådespelare", director: "regi", runtime: "längd", original_title: "originaltitel", loaned_to: "utlåning",
-  loan_date: "utlåning", due_date: "utlåning", added_date: "tillagd" };
+  loan_date: "utlåning", due_date: "utlåning", added_date: "tillagd", artist: "artist", label: "skivbolag",
+  cat_no: "katalognummer", tracks: "antal spår", nr_discs: "antal skivor" };
 const fieldName = (f) => FIELD_NAMES[f] || f;
 
 function viewRefreshItem(it) {
@@ -544,7 +919,7 @@ function viewLoan(it) {
 }
 
 async function viewEdit(it) {
-  const f = await facets();
+  const f = await facets(false, "video");
   const field = (k, label, type = "text", extra = "") =>
     `<label>${label}<input id="e-${k}" data-f="${k}" type="${type}" value="${esc(it[k] ?? "")}" ${extra}></label>`;
   openSheet(`
@@ -809,21 +1184,32 @@ const scanLib = () => currentLibId();
 function scanWhere() {
   return state.lib === "all" ? `Skannar mot <b>${esc(libName(scanLib()))}</b> (välj en samling för att byta)` : `Samling: <b>${esc(libName(scanLib()))}</b>`;
 }
+// Film eller musik? Börjar på det som visas, och går att byta i skanningsrutan.
+let scanMode = "video";
+const codeView = () => (scanMode === "music" ? viewMusicCode : viewCode);
 
 // Vanlig skanning: en kod i taget, eller serieläge där kameran står kvar
 function viewScan() {
   const serial = store.get("serialScan", false);
   openSheet(scannerHtml("Skanna streckkod", `
+    <div class="seg-switch" id="scan-mode"><button data-m="video" class="${scanMode === "video" ? "on" : ""}">🎬 Film & serier</button>
+      <button data-m="music" class="${scanMode === "music" ? "on" : ""}">🎵 Musik</button></div>
     <p class="muted small">${scanWhere()}</p>
     <label class="check"><input type="checkbox" id="serial" ${serial ? "checked" : ""}> Skanna i serie (kameran står kvar)</label>
-    <div id="queue"></div>`, "Streckkod eller titel"));
+    <div id="queue"></div>`, scanMode === "music" ? "Streckkod eller album" : "Streckkod eller titel"));
   $("#serial").onchange = (e) => store.set("serialScan", e.target.checked);
+  $$("#scan-mode button").forEach((b) => (b.onclick = () => {
+    scanMode = b.dataset.m;
+    $$("#scan-mode button").forEach((x) => x.classList.toggle("on", x === b));
+    $("#manual").placeholder = scanMode === "music" ? "Streckkod eller album" : "Streckkod eller titel";
+    renderQueue();
+  }));
   renderQueue();
   startCamera(async (code) => {
     if (!$("#serial")?.checked) {
       stopScan();
       beep("new");
-      return show(viewCode, code);
+      return show(codeView(), code);
     }
     const r = await api(`/api/barcode/${code}?lib=${scanLib()}&local=1`);
     const mine = r.existing.filter((e) => !isWish(e));
@@ -842,19 +1228,21 @@ function viewScan() {
       toast(`Ny: ${code} – lagd i kön`);
       resolveQueued(code);
     }
-  }, (text) => show(viewAdd, { query: text }));
+  }, (text) => show(scanMode === "music" ? viewMusicAdd : viewAdd, { query: text }));
 }
 
-// Kön från serieskanning. Titlarna slås upp i bakgrunden så att du ser vad som ligger där.
-const queueKey = () => `scanQueue-${scanLib()}`;
+// Kön från serieskanning (en för film, en för musik). Titlarna slås upp i bakgrunden så att du ser vad som ligger där.
+const queueKey = () => `scanQueue-${scanMode === "music" ? "music-" : ""}${scanLib()}`;
 const queue = () => store.get(queueKey(), []);
 const queueInfo = () => store.get("scanInfo", {});
 async function resolveQueued(code) {
   try {
-    const r = await api(`/api/barcode/${code}?lib=${scanLib()}`);
+    const music = scanMode === "music";
+    const r = await api(`/api/${music ? "music/" : ""}barcode/${code}?lib=${scanLib()}`);
     const m = r.match;
     const info = queueInfo();
-    info[code] = m ? { title: m.title, year: m.year, poster: m.poster_path, src: m.source }
+    info[code] = m ? { title: music ? `${artistName(m.artist)} – ${m.title}` : m.title, year: m.year,
+      poster: music ? null : m.poster_path, cover: music ? m.cover : null, src: m.source }
       : { title: r.product_title || null, unknown: !r.product_title };
     store.set("scanInfo", info);
     renderQueue();
@@ -867,7 +1255,7 @@ function renderQueue() {
   el.innerHTML = q.length ? `<h3>Att lägga till (${q.length})</h3>` + q.map((c) => {
     const i = info[c];
     const label = !i ? `<span class="muted">Letar…</span>` : i.title ? `${esc(i.title)}${i.year ? ` (${i.year})` : ""}` : `<span class="muted">Okänd – sök på titel</span>`;
-    return `<div class="list-item q" data-code="${c}">${i?.poster ? `<img class="poster thumb" src="${TMDB_IMG}w92${esc(i.poster)}" alt="">` : `<div class="poster none thumb"></div>`}
+    return `<div class="list-item q" data-code="${c}">${i?.poster ? `<img class="poster thumb" src="${TMDB_IMG}w92${esc(i.poster)}" alt="">` : i?.cover ? netCover(i.cover, "thumb square") : `<div class="poster none thumb"></div>`}
       <div class="grow"><div class="li-title">${label}</div><div class="muted small">${c}</div></div><span class="muted">Lägg till ›</span>
       <button class="icon x" data-rm="${c}" aria-label="Ta bort ur kön">✕</button></div>`;
   }).join("") : "";
@@ -876,32 +1264,33 @@ function renderQueue() {
       removeFromQueue(e.target.closest("[data-rm]").dataset.rm);
       renderQueue(); return;
     }
-    stopScan(); show(viewCode, r.dataset.code);
+    stopScan(); show(codeView(), r.dataset.code);
   }));
 }
 const removeFromQueue = (code) => store.set(queueKey(), queue().filter((c) => c !== code));
+
+function showExisting(code, existing) {
+  removeFromQueue(code);
+  const wish = existing.every(isWish);
+  openSheet(`<h2>${wish ? "★ På din önskelista" : "Du har redan den här"}</h2>
+    <div class="notice ${wish ? "star" : "ok"}">Streckkod ${esc(code)} · ${esc(libName(scanLib()))}</div>` +
+    existing.map((it) => listItem(it)).join("") +
+    (wish ? `<button class="btn primary" id="b-buy">Köpt! Flytta till samlingen</button>` : "") +
+    `<button class="btn" id="b-again">${queue().length ? "Nästa i kön" : "Skanna nästa"}</button>`);
+  bindOpen();
+  $("#b-again").onclick = () => nextAfterAdd(code);
+  $("#b-buy") && ($("#b-buy").onclick = async () => {
+    for (const it of existing) await patch(it.id, { collection_status: "In Collection", added_date: today() });
+    toast("Flyttad till samlingen"); load(); nextAfterAdd(code);
+  });
+}
 
 async function viewCode(code) {
   openSheet(`<h2>Streckkod ${esc(code)}</h2><p class="muted">Letar i dina samlingar, MyMovies och fler källor…</p>`);
   let r;
   try { r = await api(`/api/barcode/${code}?lib=${scanLib()}`); }
   catch (e) { return openSheet(`<h2>Streckkod ${esc(code)}</h2><div class="notice bad">Kunde inte slå upp streckkoden: ${esc(e.message)}</div>`); }
-  if (r.existing.length) {
-    removeFromQueue(code);
-    const wish = r.existing.every(isWish);
-    openSheet(`<h2>${wish ? "★ På din önskelista" : "Du har redan den här"}</h2>
-      <div class="notice ${wish ? "star" : "ok"}">Streckkod ${esc(code)} · ${esc(libName(scanLib()))}</div>` +
-      r.existing.map((it) => listItem(it)).join("") +
-      (wish ? `<button class="btn primary" id="b-buy">Köpt! Flytta till samlingen</button>` : "") +
-      `<button class="btn" id="b-again">${queue().length ? "Nästa i kön" : "Skanna nästa"}</button>`);
-    bindOpen();
-    $("#b-again").onclick = () => nextAfterAdd(code);
-    $("#b-buy") && ($("#b-buy").onclick = async () => {
-      for (const it of r.existing) await patch(it.id, { collection_status: "In Collection", added_date: today() });
-      toast("Flyttad till samlingen"); load(); nextAfterAdd(code);
-    });
-    return;
-  }
+  if (r.existing.length) return showExisting(code, r.existing);
   viewAdd({ query: r.query, barcode: code, candidates: r.candidates, productTitle: r.product_title, match: r.match, tried: r.tried });
 }
 
@@ -910,7 +1299,7 @@ function nextAfterAdd(code) {
   if (code) removeFromQueue(code);
   const next = queue()[0];
   stack = [];
-  if (next) show(viewCode, next); else show(viewScan);
+  if (next) show(codeView(), next); else show(viewScan);
 }
 
 let addedThisRound = 0;
@@ -918,7 +1307,7 @@ const FORMATS = (f) => [...new Set(["DVD", "Blu-ray", "Blu-ray 3D", "4K UHD", "D
 
 // Lägg till: bästa träff från streckkoden, eller sök på TMDB och välj
 async function viewAdd({ query = "", barcode = null, candidates = null, productTitle = null, match = null, tried = [] }) {
-  const f = await facets();
+  const f = await facets(false, "video");
   const last = store.get("lastAdd", { format: "DVD", location: "" });
   const keep = store.get("keepAdding", false);
   const fmt = match?.format || last.format;
@@ -1026,7 +1415,7 @@ function viewBulkAdd() {
 async function bulkFind() {
   const lines = [...new Set($("#bulk-text").value.split("\n").map((l) => l.trim()).filter(Boolean))].slice(0, 100);
   if (!lines.length) return $("#bulk-text").focus();
-  const f = await facets();
+  const f = await facets(false, "video");
   const last = store.get("lastAdd", { format: "DVD", location: "" });
   const rows = lines.map((line) => ({ line, list: null, pick: 0 }));
   $("#bulk-res").innerHTML = `
@@ -1096,7 +1485,7 @@ async function bulkFind() {
 // ---------- Inventering ----------
 
 async function viewInventory() {
-  const f = await facets();
+  const f = await facets(false, "all");
   const inv = store.get("inventory", null);
   openSheet(`
     <h2>Inventering</h2>
@@ -1188,32 +1577,68 @@ function bars(rows) {
     <span class="bar"><span style="width:${(r.n / max) * 100}%"></span></span><span class="bar-n">${r.n}</span></div>`).join("")}</div>`;
 }
 
-async function viewStats() {
+const kronor = (n) => `${Math.round(n).toLocaleString("sv-SE")} kr`;
+
+async function viewStats(part = musicTab() ? "music" : "video") {
   const s = await api(`/api/stats?${libParam()}`);
-  const hours = Math.round(s.minutes / 60);
-  const kr = Math.round(s.spent).toLocaleString("sv-SE");
-  const tile = (n, label) => `<div class="tile"><b>${n}</b><span>${label}</span></div>`;
+  const tile = (n, label, hl = false) => `<div class="tile ${hl ? "hl" : ""}"><b>${n}</b><span>${label}</span></div>`;
+  const m = s.music, v = s.value;
+  const parts = { video: "Film & serier", music: "Musik", value: "Värde & dubbletter" };
+  let body;
+  if (part === "music") {
+    const hours = Math.round(m.minutes / 60);
+    body = m.albums ? `
+      <div class="tiles">
+        ${tile(m.albums, "album", true)}${tile(m.artists_count, "artister")}${tile(m.discs, "skivor")}
+        ${tile(m.tracks.toLocaleString("sv-SE"), "spår")}${tile(hours.toLocaleString("sv-SE"), `timmar musik`)}
+        ${tile(m.compilations, "samlingsskivor")}
+      </div>
+      <h3>Flest album av</h3>${bars(m.artists)}
+      <h3>Format</h3>${bars(m.formats)}
+      ${m.genres.length ? `<h3>Genrer</h3>${bars(m.genres)}` : ""}
+      ${m.decades.length ? `<h3>Årtionde</h3>${bars(m.decades)}` : ""}
+      ${m.labels.length ? `<h3>Skivbolag</h3>${bars(m.labels)}` : ""}`
+      : `<p class="muted">Ingen musik i samlingen än.</p>`;
+  } else if (part === "value") {
+    body = `
+      <div class="tiles">
+        ${tile(kronor(v.total), "inköpspris totalt", true)}${tile(v.priced ? kronor(v.avg) : "–", "i snitt per titel")}
+        ${tile(s.all_discs, "skivor totalt")}${tile(`${v.priced} av ${v.items}`, "har inköpspris")}
+      </div>
+      ${v.priced < v.items ? `<p class="muted small">Värdet räknas bara på titlar där du fyllt i inköpspris (Redigera → Inköpspris, eller från CLZ).</p>` : ""}
+      ${v.top.length ? `<h3>Dyraste</h3>${v.top.map((t) => listItem(t, `<span class="muted">${kronor(t.purchase_price)}</span>`)).join("")}` : ""}
+      <h3>Dubbletter (${s.duplicates.length})</h3>
+      <p class="muted small">Samma film, säsong eller album mer än en gång – t.ex. både DVD och Blu-ray.</p>
+      ${s.duplicates.map((d) => `<div class="notice"><b>${esc(d.kind === "music" ? `${artistName(d.artist)} – ${d.title}` : d.title)}</b>
+        ${d.items.map((it) => listItem(it)).join("")}</div>`).join("") || `<p>Inga dubbletter. 👌</p>`}`;
+  } else {
+    const hours = Math.round(s.minutes / 60);
+    body = `
+      <div class="tiles">
+        ${tile(s.movies, "filmer", true)}${tile(s.series, `serier (${s.seasons} säsonger)`)}${tile(s.discs, "skivor")}
+        ${tile(hours.toLocaleString("sv-SE"), `timmar (${Math.round(hours / 24)} dygn)`)}
+        ${tile(s.titles ? Math.round((s.watched / s.titles) * 100) + " %" : "–", "sedda")}
+        ${tile(s.wish, "på önskelistan")}${tile(s.loaned, "utlånade")}
+      </div>
+      <h3>Format</h3>${bars(s.formats)}
+      <h3>Genrer</h3>${bars(s.genres)}
+      <h3>Årtionde</h3>${bars(s.decades)}
+      ${s.added_per_year.length ? `<h3>Tillagda per år</h3>${bars(s.added_per_year)}` : ""}
+      ${s.directors.length ? `<h3>Flest filmer av</h3>${bars(s.directors)}` : ""}
+      ${s.locations.length ? `<h3>Platser</h3>${bars(s.locations)}` : ""}`;
+  }
   openSheet(`
     <h2>Statistik</h2><p class="muted small">${esc(state.lib === "all" ? "Alla samlingar" : libName(state.lib))}</p>
-    <div class="tiles">
-      ${tile(s.movies, "filmer")}${tile(s.series, `serier (${s.seasons} säsonger)`)}${tile(s.discs, "skivor")}
-      ${tile(hours.toLocaleString("sv-SE"), `timmar (${Math.round(hours / 24)} dygn)`)}
-      ${tile(s.titles ? Math.round((s.watched / s.titles) * 100) + " %" : "–", "sedda")}
-      ${tile(kr + " kr", "inköpspris")}
-      ${tile(s.wish, "på önskelistan")}${tile(s.loaned, "utlånade")}
-    </div>
-    <h3>Format</h3>${bars(s.formats)}
-    <h3>Genrer</h3>${bars(s.genres)}
-    <h3>Årtionde</h3>${bars(s.decades)}
-    ${s.added_per_year.length ? `<h3>Tillagda per år</h3>${bars(s.added_per_year)}` : ""}
-    ${s.directors.length ? `<h3>Flest filmer av</h3>${bars(s.directors)}` : ""}
-    ${s.locations.length ? `<h3>Platser</h3>${bars(s.locations)}` : ""}`);
+    <div class="seg-switch stat-tabs">${Object.entries(parts).map(([k, l]) => `<button data-p="${k}" class="${k === part ? "on" : ""}">${l}</button>`).join("")}</div>
+    ${body}`);
+  $$(".stat-tabs button").forEach((b) => (b.onclick = () => { stack[stack.length - 1] = [viewStats, [b.dataset.p]]; viewStats(b.dataset.p); }));
+  bindOpen();
 }
 
 // ---------- Slumpa kvällens film ----------
 
 async function viewRandom(pickId = null) {
-  const f = await facets();
+  const f = await facets(false, "video");
   const r = store.get("randomOpts", { kind: "movie", unwatched: true, max: "", genre: "", format: "" });
   let pick = null;
   if (pickId) pick = await api(`/api/items/${pickId}`).catch(() => null);
@@ -1291,58 +1716,110 @@ async function viewCollection(id) {
 
 // ---------- Saknar omslag / felmatchningar ----------
 
-async function viewMissing() {
-  const list = await api(`/api/items?status=all&missing_poster=true&${libParam()}`);
-  openSheet(`<h2>Saknar omslag (${list.length})</h2>
-    <p class="muted small">Titlar som inte kunde matchas automatiskt. Tryck för att välja rätt film.</p>
+async function viewMissing(kind = "video") {
+  const music = kind === "music";
+  const list = await api(`/api/items?status=all&missing_poster=true&kind=${kind}&${libParam()}`);
+  openSheet(`<h2>${music ? "Album utan omslag" : "Saknar omslag"} (${list.length})</h2>
+    <p class="muted small">${music ? "Album som inte hittades i MusicBrainz/Discogs. Tryck för att välja rätt album, eller lägg in ett eget omslag."
+      : "Titlar som inte kunde matchas automatiskt. Tryck för att välja rätt film."}</p>
     ${list.length ? `<button class="btn" id="m-retry">Försök igen automatiskt</button>` : ""}
-    ${list.map((i) => listItem(i, `<span class="muted">Välj ›</span>`)).join("") || `<p>Alla titlar har omslag! 🎉</p>`}`);
-  $$(".list-item[data-id]").forEach((el) => (el.onclick = async () => show(viewRematch, await api(`/api/items/${el.dataset.id}`))));
+    ${list.map((i) => listItem(i, `<span class="muted">Välj ›</span>`)).join("") || `<p>Alla har omslag! 🎉</p>`}`);
+  $$(".list-item[data-id]").forEach((el) => (el.onclick = async () =>
+    show(music ? viewMusicRematch : viewRematch, await api(`/api/items/${el.dataset.id}`))));
   $("#m-retry") && ($("#m-retry").onclick = async () => {
-    await api("/api/enrich?retry_failed=true", { method: "POST" });
+    await api(`/api/enrich?retry_failed=true${music ? "&kind=music" : ""}`, { method: "POST" });
     toast("Försöker igen i bakgrunden…");
   });
+}
+
+// ---------- Bara digitalt ----------
+
+async function viewDigitalOnly() {
+  const list = await api(`/api/digital/only?${libParam()}`);
+  const src = (s) => s.map((x) => (x === "plex" ? "Plex" : "Jellyfin")).join(" + ");
+  openSheet(`<h2>Bara digitalt (${list.length})</h2>
+    <p class="muted small">Finns i Plex/Jellyfin men inte på skiva i ${esc(state.lib === "all" ? "någon samling" : libName(state.lib))}.
+      Tryck ★ för att lägga den på önskelistan.</p>
+    ${list.map((d, i) => `<div class="list-item"><div class="poster none thumb"></div>
+      <div class="grow"><div class="li-title">${esc(d.title)}</div>
+      <div class="muted small">${d.year || ""} · ${d.kind === "tv" ? "Serie" : "Film"} · ${src(d.sources)}</div></div>
+      ${d.wished ? `<span class="star-text">★</span>` : d.tmdb_id ? `<button class="btn small" data-wish="${i}">★ Önska</button>` : ""}</div>`).join("")
+      || `<p class="muted">Inget här – allt digitalt finns också på skiva, eller så är Plex/Jellyfin inte synkat än (Meny → Inställningar).</p>`}`);
+  $$("[data-wish]").forEach((b) => (b.onclick = async () => {
+    const d = list[b.dataset.wish];
+    b.disabled = true;
+    try {
+      await api("/api/items", { method: "POST", json: { tmdb_id: d.tmdb_id, type: d.kind, wish: true, force: true, format: null, library_id: currentLibId() } });
+      b.outerHTML = `<span class="star-text">★</span>`;
+      toast(`★ ${esc(d.title)} på önskelistan`); load();
+    } catch (e) { b.disabled = false; toast(esc(e.message), "bad"); }
+  }));
+}
+
+// ---------- Export ----------
+
+function viewExport() {
+  const lib = state.lib === "all" ? "all" : state.lib;
+  openSheet(`<h2>Exportera samlingen</h2>
+    <p class="muted">Din data är din. Ladda ner ${esc(state.lib === "all" ? "alla samlingar" : libName(state.lib))} som fil –
+      till ett kalkylark, en annan app eller bara för att ha en kopia.</p>
+    <a class="choice" href="/api/export?format=csv&lib=${lib}" download><b>📄 CSV (kalkylark)</b><span>Öppnas i Excel, Numbers eller Google Sheets. En rad per titel/album.</span></a>
+    <a class="choice" href="/api/export?format=json&lib=${lib}" download><b>🧾 JSON (allt)</b><span>Alla fält, även låtlistor och extra uppgifter från CLZ.</span></a>
+    <p class="muted small">Vill du ha hela databasen? Använd Säkerhetskopior – där kan du ladda ner en .db-fil.</p>`);
 }
 
 // ---------- Meny ----------
 
 async function viewMenu() {
   const s = await api(`/api/status?${libParam()}`);
-  const c = s.counts, e = s.enrich, p = s.posters;
+  const c = s.counts, e = s.enrich, p = s.posters, m = s.music;
   const entry = (id, icon, label, sub = "") => `<div class="menu-item" id="${id}"><span class="mi">${icon}</span>
     <div class="grow">${label}${sub ? `<div class="muted small">${sub}</div>` : ""}</div><span class="muted">›</span></div>`;
-  const busy = e.running ? `<div class="notice"><progress max="${e.total}" value="${e.done}"></progress>
-      <div class="small muted">${e.mode === "refresh" ? "Uppdaterar metadata" : "Hämtar omslag och filmserier"}: ${e.done} av ${e.total}</div></div>`
-    : p.running ? `<div class="notice"><progress max="${p.total}" value="${p.done}"></progress>
-      <div class="small muted">Sparar omslag lokalt: ${p.done} av ${p.total}</div></div>` : "";
+  const group = (label) => `<div class="menu-group">${label}</div>`;
+  const prog = (x, text) => `<div class="notice"><progress max="${x.total}" value="${x.done}"></progress><div class="small muted">${text}: ${x.done} av ${x.total}</div></div>`;
+  const busy = (e.running ? prog(e, e.mode === "refresh" ? "Uppdaterar metadata" : "Hämtar omslag och filmserier") : "")
+    + (m.running ? prog(m, "Hämtar låtlistor och skivomslag") : "")
+    + (!e.running && p.running ? prog(p, "Sparar omslag lokalt") : "");
   openSheet(`
     <h2>Meny</h2>
-    <div class="notice">${esc(state.lib === "all" ? "Alla samlingar" : libName(state.lib))}: ${c.total || 0} titlar · ${c.movies || 0} filmer · ${c.tv || 0} säsonger</div>
-    ${s.tmdb ? "" : `<div class="notice bad">TMDB-nyckel saknas – omslag och sökning fungerar inte. <a href="#" id="m-fix">Fyll i under Inställningar</a>.</div>`}
+    <div class="notice">${esc(state.lib === "all" ? "Alla samlingar" : libName(state.lib))}: ${c.movies || 0} filmer · ${c.tv || 0} säsonger · ${c.music || 0} album</div>
+    ${s.tmdb ? "" : `<div class="notice bad">TMDB-nyckel saknas – omslag och sökning för film fungerar inte. <a href="#" id="m-fix">Fyll i under Inställningar</a>.</div>`}
     ${busy}
-    ${entry("m-add", "＋", "Lägg till utan streckkod", "Sök på titel")}
-    ${entry("m-bulk", "☰", "Lägg till flera", "Klistra in en lista med titlar")}
-    ${entry("m-stats", "📊", "Statistik")}
+    ${group("Lägg till")}
+    ${entry("m-add", "🎬", "Film eller serie", "Sök på titel")}
+    ${entry("m-add-music", "🎵", "Musik", "Sök på artist och album")}
+    ${entry("m-bulk", "☰", "Lägg till flera filmer", "Klistra in en lista med titlar")}
+    ${group("Samlingen")}
+    ${entry("m-stats", "📊", "Statistik", "Även värde och dubbletter")}
     ${entry("m-coll", "🎞", "Filmserier", "Se vilka delar du saknar")}
     ${entry("m-loans", "🤝", "Utlånat")}
     ${entry("m-inv", "📋", "Inventering", "Skanna hyllan och se vad som saknas")}
-    ${entry("m-missing", "🖼", "Saknar omslag", c.no_poster ? `${c.no_poster} titlar` : "")}
+    ${s.digital.configured.length ? entry("m-digital", "▶", "Bara digitalt", "Finns i Plex/Jellyfin men inte på skiva") : ""}
+    ${entry("m-missing", "🖼", "Saknar omslag", c.no_poster ? `${c.no_poster} filmer/serier` : "")}
+    ${c.music ? entry("m-missing-music", "💿", "Album utan omslag", c.music_no_cover ? `${c.music_no_cover} album` : "") : ""}
     ${entry("m-covers", "🗃", "Importera omslag", "Många bilder eller en zip på en gång")}
-    ${entry("m-refresh", "⟳", "Uppdatera metadata", "För hela samlingen")}
+    ${entry("m-refresh", "⟳", "Uppdatera metadata", "För filmer och serier i hela samlingen")}
     ${entry("m-libs", "🗂", "Samlingar", `${state.libs.length} st – skapa, byt namn, ta bort`)}
-    ${entry("m-import", "⬆", "Importera från CLZ")}
-    ${entry("m-backup", "💾", "Säkerhetskopior", s.backups[0] ? `Senast ${s.backups[0].time.replace("T", " ")}` : "")}
-    ${entry("m-ha", "🏠", "Home Assistant")}
-    ${entry("m-settings", "⚙", "Inställningar", "TMDB, omslag, Plex/Jellyfin, säkerhetskopior")}
-    <p class="muted small center-text">Diskoteket ${esc(s.version)} · data i ${esc(s.config_dir)}</p>`);
-  const go = { "m-add": () => show(viewAdd, {}), "m-bulk": () => show(viewBulkAdd), "m-covers": () => show(viewCoverImport), "m-stats": () => show(viewStats), "m-coll": () => show(viewCollections),
+    ${group("Data")}
+    ${entry("m-import", "⬆", "Importera från CLZ", "CLZ Movies eller CLZ Music (CSV)")}
+    ${entry("m-export", "⬇", "Exportera", "CSV eller JSON")}
+    ${entry("m-backup", "💾", "Säkerhetskopior", s.backups[0] ? `Senast ${s.backups[0].time.replace("T", " ")} · återställ` : "Ta en kopia eller återställ")}
+    ${group("Inställningar")}
+    ${entry("m-settings", "⚙", "Inställningar", "TMDB, musik, omslag, Plex/Jellyfin")}
+    ${entry("m-auth", "🔒", "Inloggning", s.auth ? "På – lösenord krävs" : "Av – alla i nätverket kommer åt appen")}
+    ${entry("m-ha", "🏠", "Home Assistant", "Integration och kort")}
+    <p class="muted small center-text">Diskoteket ${esc(s.version)} · data i ${esc(s.config_dir)}<br>
+      Vibecodat – byggt av Claude (AI), inte av en proffsutvecklare.</p>`);
+  const go = { "m-add": () => show(viewAdd, {}), "m-add-music": () => show(viewMusicAdd, {}), "m-bulk": () => show(viewBulkAdd),
+    "m-covers": () => show(viewCoverImport), "m-stats": () => show(viewStats), "m-coll": () => show(viewCollections),
     "m-loans": () => show(viewLoans), "m-inv": () => show(viewInventory), "m-missing": () => show(viewMissing),
-    "m-refresh": () => show(viewRefreshLib), "m-libs": () => show(viewLibManage),
-    "m-import": () => show(viewImport), "m-backup": () => show(viewBackups),
+    "m-missing-music": () => show(viewMissing, "music"), "m-digital": () => show(viewDigitalOnly),
+    "m-refresh": () => show(viewRefreshLib), "m-libs": () => show(viewLibManage), "m-export": () => show(viewExport),
+    "m-import": () => show(viewImport), "m-backup": () => show(viewBackups), "m-auth": () => show(viewAuth),
     "m-ha": () => show(viewHA), "m-settings": () => show(viewSettings) };
-  for (const [id, fn] of Object.entries(go)) $("#" + id).onclick = fn;
+  for (const [id, fn] of Object.entries(go)) $("#" + id) && ($("#" + id).onclick = fn);
   $("#m-fix") && ($("#m-fix").onclick = (ev) => { ev.preventDefault(); show(viewSettings); });
-  if (e.running || p.running) setTimeout(() => stack.at(-1)?.[0] === viewMenu && !$("#sheet").hidden && refresh(), 1500);
+  if (e.running || p.running || m.running) setTimeout(() => stack.at(-1)?.[0] === viewMenu && !$("#sheet").hidden && refresh(), 1500);
 }
 
 function viewRefreshLib() {
@@ -1370,8 +1847,9 @@ function viewRefreshLib() {
 function viewImport() {
   openSheet(`
     <h2>Importera från CLZ</h2>
-    <p class="muted">Välj CSV-filen som du exporterat från CLZ Movies. Du kan importera samma fil igen – befintliga poster uppdateras,
-      inget dubbleras och det du ändrat i Diskoteket behålls.</p>
+    <p class="muted">Välj CSV-filen som du exporterat från <b>CLZ Movies</b> eller <b>CLZ Music</b> – appen känner själv igen vilken.
+      Du kan importera samma fil igen: befintliga poster uppdateras, inget dubbleras och det du ändrat i Diskoteket behålls.
+      Musik och film kan ligga i samma samling utan att krocka.</p>
     <label class="form-label">Till samling</label>
     <select id="imp-lib">${libOptions(currentLibId())}<option value="new">+ Ny samling…</option></select>
     <input id="imp-new" type="text" placeholder="Namn på ny samling" hidden>
@@ -1391,8 +1869,11 @@ function viewImport() {
     $("#import-msg").innerHTML = `<p class="muted">Importerar…</p>`;
     try {
       const r = await api("/api/import", { method: "POST", body: fd });
-      $("#import-msg").innerHTML = `<div class="notice ok">${r.added} nya, ${r.updated} uppdaterade. Omslagen hämtas nu i bakgrunden – se menyn.
+      const music = r.kind === "music";
+      $("#import-msg").innerHTML = `<div class="notice ok"><b>${music ? "CLZ Music" : "CLZ Movies"}:</b> ${r.added} nya, ${r.updated} uppdaterade.
+        ${music ? "Låtlistor och skivomslag hämtas nu i bakgrunden (några sekunder per skiva) – se menyn." : "Omslagen hämtas nu i bakgrunden – se menyn."}
         ${r.errors.length ? `<br>Fel: ${r.errors.map(esc).join("<br>")}` : ""}</div>`;
+      if (music && state.tab !== "music") $('#tabs [data-tab="music"]').click();
       state.lib = r.library_id; store.set("lib", r.library_id); state.facets = null;
       await loadLibs(); load();
     } catch (e) { $("#import-msg").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
@@ -1404,14 +1885,37 @@ async function viewBackups() {
   openSheet(`
     <h2>Säkerhetskopior</h2>
     <p class="muted small">Tas automatiskt var ${s.backup_hours}:e timme och sparas i <code>backup</code> i appdata-mappen.
-    Kopior som tas inför borttagning av en samling sparas tills du själv tar bort dem.</p>
+    Kopior som tas inför borttagning eller återställning sparas tills du själv tar bort dem.</p>
     <button class="btn primary" id="bk-now">Ta en kopia nu</button>
+    <label class="btn file-btn">⬆ Återställ från fil…<input type="file" id="bk-file" accept=".db,application/octet-stream" hidden></label>
+    <div id="bk-msg"></div>
     <h3>Senaste</h3>
     ${s.backups.map((b) => `<div class="list-item"><div class="grow">${esc(b.time.replace("T", " "))}
       <div class="muted small">${esc(b.name)} · ${(b.size / 1024 / 1024).toFixed(1)} MB</div></div>
-      <a class="btn small" href="/api/backups/${encodeURIComponent(b.name)}">Ladda ner</a></div>`).join("") || `<p class="muted">Inga kopior än.</p>`}
-    <p class="muted small">Återställa: stoppa containern, ersätt <code>diskoteket.db</code> i appdata med kopian och starta igen.</p>`);
+      <a class="btn small" href="/api/backups/${encodeURIComponent(b.name)}">Ladda ner</a>
+      <button class="btn small" data-restore="${esc(b.name)}">Återställ</button></div>`).join("") || `<p class="muted">Inga kopior än.</p>`}
+    <p class="muted small">Vid återställning tar appen först en kopia av nuvarande databas, så det går alltid att ångra.
+      Kopior från äldre versioner av Diskoteket uppgraderas automatiskt. Lösenordet för inloggning påverkas inte.</p>`);
   $("#bk-now").onclick = async () => { await api("/api/backup", { method: "POST" }); toast("Kopia sparad"); refresh(); };
+  const restore = async (opts, label) => {
+    if (!confirm(`Ersätta hela samlingen med ${label}?\n\nNuvarande databas sparas först som en egen säkerhetskopia.`)) return;
+    $("#bk-msg").innerHTML = `<p class="muted">Återställer…</p>`;
+    try {
+      const r = await api("/api/restore", { method: "POST", ...opts });
+      state.facets = null;
+      await loadLibs(); load();
+      $("#bk-msg").innerHTML = `<div class="notice ok">Återställd: ${r.items} titlar. Den gamla databasen sparades som <code>${esc(r.safety_copy)}</code>.</div>`;
+      toast("Säkerhetskopian är återställd", "ok");
+    } catch (e) { $("#bk-msg").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
+  $$("[data-restore]").forEach((b) => (b.onclick = () => restore({ json: { name: b.dataset.restore } }, `kopian från ${b.closest(".list-item").querySelector(".grow").firstChild.textContent.trim()}`)));
+  $("#bk-file").onchange = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    restore({ body: fd }, `filen ”${f.name}”`);
+    e.target.value = "";
+  };
 }
 
 async function viewSettings() {
@@ -1434,6 +1938,14 @@ async function viewSettings() {
       <label class="check"><input type="checkbox" id="s-lookup_upcitemdb" ${s.lookup_upcitemdb === "1" ? "checked" : ""}> Slå upp i UPCitemdb (amerikanska utgåvor, 100/dag)</label>
       ${secret("ean_db_token", "EAN-DB-nyckel (valfri)", "JWT-nyckel från ean-db.com")}
       <p class="muted small">EAN-DB ger 250 gratis uppslag efter registrering. Koder du kopplar till en film kommer appen ihåg.</p>
+
+      <h3>Musik</h3>
+      <label class="check"><input type="checkbox" id="s-lookup_musicbrainz" ${s.lookup_musicbrainz === "1" ? "checked" : ""}> Slå upp i MusicBrainz (gratis, ingen nyckel)</label>
+      <button class="btn small" data-test="musicbrainz">Testa MusicBrainz</button> <span class="test-msg" id="t-musicbrainz"></span>
+      ${secret("discogs_token", "Discogs-nyckel (valfri)", "Personal access token från discogs.com")}
+      <button class="btn small" data-test="discogs">Testa Discogs</button> <span class="test-msg" id="t-discogs"></span>
+      <p class="muted small">Discogs är bäst på ovanliga utgåvor och vinyl. Nyckel: logga in på discogs.com → Settings → Developers →
+        <i>Generate new token</i>. Gratis.</p>
 
       <h3>Omslag</h3>
       <label class="check"><input type="checkbox" id="s-local_posters" ${s.local_posters === "1" ? "checked" : ""}> Spara omslag lokalt i appdata</label>
@@ -1479,14 +1991,72 @@ async function viewSettings() {
   }));
 }
 
-function viewHA() {
+// ---------- Inloggning ----------
+
+async function viewAuth() {
+  const a = await api("/api/auth");
+  openSheet(`
+    <h2>Inloggning</h2>
+    ${a.enabled ? `<div class="notice ok">🔒 Inloggning är <b>på</b>. Den som öppnar appen måste skriva lösenordet (en gång per enhet).</div>`
+      : `<div class="notice warn">Inloggning är <b>av</b>. Alla som når adressen kan se och ändra samlingen.
+        Slå på den om appen nås utanför hemmet, t.ex. via en reverse proxy för kamerans skull.</div>`}
+    <div class="form">
+      <label>${a.enabled ? "Nytt lösenord" : "Välj ett lösenord"}<input id="au-pw" type="password" autocomplete="new-password" minlength="4"></label>
+      <label>Skriv det igen<input id="au-pw2" type="password" autocomplete="new-password"></label>
+    </div>
+    <button class="btn primary" id="au-save">${a.enabled ? "Byt lösenord" : "Slå på inloggning"}</button>
+    ${a.enabled ? `<button class="btn danger" id="au-off">Stäng av inloggning</button><button class="btn" id="au-logout">Logga ut</button>` : ""}
+    <div id="au-msg"></div>
+    ${a.enabled ? `<h3>API-nyckel för Home Assistant</h3>
+      <p class="muted small">Klistra in den när du lägger till Diskoteket-integrationen i Home Assistant. Den ger bara läsrätt till sammanfattningen.</p>
+      <div class="notice key">${esc(a.api_key)}</div>
+      <button class="btn small" id="au-key">Skapa ny nyckel</button>` : ""}
+    <p class="muted small">Glömt lösenordet? Ta bort filen <code>auth.json</code> i appdata-mappen och starta om containern.
+      Omslagsbilder visas utan inloggning, så att Home Assistant-kortet kan visa dem.</p>`);
+  $("#au-save").onclick = async () => {
+    const pw = $("#au-pw").value;
+    if (pw.length < 4) return ($("#au-msg").innerHTML = `<div class="notice bad">Minst 4 tecken.</div>`);
+    if (pw !== $("#au-pw2").value) return ($("#au-msg").innerHTML = `<div class="notice bad">Lösenorden är inte lika.</div>`);
+    await api("/api/auth", { method: "PUT", json: { password: pw } });
+    toast(a.enabled ? "Lösenordet är bytt" : "Inloggning påslagen – du är inloggad på den här enheten", "ok");
+    refresh();
+  };
+  $("#au-off") && ($("#au-off").onclick = async () => {
+    if (!confirm("Stänga av inloggningen? Då kommer alla i nätverket åt appen utan lösenord.")) return;
+    await api("/api/auth", { method: "PUT", json: { disable: true } });
+    toast("Inloggning avstängd"); refresh();
+  });
+  $("#au-logout") && ($("#au-logout").onclick = async () => { await api("/api/logout", { method: "POST" }); location.reload(); });
+  $("#au-key") && ($("#au-key").onclick = async () => {
+    if (!confirm("Skapa en ny nyckel? Den gamla slutar fungera, så du måste byta den i Home Assistant också.")) return;
+    await api("/api/auth/apikey", { method: "POST" }); refresh();
+  });
+}
+
+async function viewHA() {
   const url = location.origin;
+  const a = await api("/api/auth");
   openSheet(`
     <h2>Home Assistant</h2>
-    <p class="muted">Lägg in i <code>configuration.yaml</code> och starta om Home Assistant. Byt adressen om HA når appen på en annan adress.</p>
+    <h3>Integration och kort (rekommenderas)</h3>
+    <ol class="small">
+      <li>Öppna <b>HACS</b> → ⋮ → <b>Anpassade arkiv</b>. Lägg till <code>https://github.com/claudemicro222-cmd/diskoteket</code>
+        som typ <b>Integration</b>.</li>
+      <li>Sök på <b>Diskoteket</b> i HACS, installera och starta om Home Assistant.</li>
+      <li><b>Inställningar → Enheter och tjänster → Lägg till integration → Diskoteket</b>.
+        Adress: <code>${esc(url)}</code>${a.enabled ? ` · API-nyckel: se Meny → Inloggning` : ""}.</li>
+      <li>Lägg till kortet <b>Diskoteket</b> på en instrumentpanel. Välj detaljnivå i kortets inställningar:
+        kompakt, standard eller detaljerad.</li>
+    </ol>
+    <p class="muted small">Integrationen ger sensorer för filmer, serier, album, osedda, önskelista, utlånat och försenade lån –
+      som du kan använda i egna automationer.</p>
+    <h3>Utan integration (REST-sensor)</h3>
+    <p class="muted small">Lägg in i <code>configuration.yaml</code> och starta om Home Assistant.</p>
     <pre>rest:
   - resource: ${esc(url)}/api/ha
-    scan_interval: 900
+    scan_interval: 900${a.enabled ? `
+    headers:
+      Authorization: "Bearer ${esc(a.api_key)}"` : ""}
     sensor:
       - name: "Diskoteket"
         value_template: "{{ value_json.total }}"
@@ -1495,6 +2065,7 @@ function viewHA() {
           - movies
           - series
           - seasons
+          - music
           - unwatched
           - wishlist
           - loaned
@@ -1505,13 +2076,7 @@ function viewHA() {
       - name: "Diskoteket senast tillagd"
         value_template: "{{ value_json.latest_title }}"
       - name: "Diskoteket försenade lån"
-        value_template: "{{ value_json.overdue }}"
-
-rest_command:
-  slumpa_film:
-    url: "${esc(url)}/api/random?kind=movie&amp;unwatched=true"
-    method: GET</pre>
-    <p class="muted small">Med <code>rest_command</code> kan ett skript eller en knapp slumpa kvällens film. Svaret (titel, år, längd) går att använda i en avisering via <code>response_variable</code>.</p>`);
+        value_template: "{{ value_json.overdue }}"</pre>`);
 }
 
 // ---------- Start ----------
@@ -1531,20 +2096,37 @@ $("#tabs").onclick = (e) => {
   if (e.target.tagName !== "BUTTON") return;
   $("#tabs .on").classList.remove("on");
   e.target.classList.add("on");
+  const wasMusic = musicTab();
   state.tab = e.target.dataset.tab;
+  store.set("tab", state.tab);
+  if (wasMusic !== musicTab()) { // format och genrer skiljer sig mellan film och musik
+    state.format = ""; state.genre = "";
+    if (state.sort === "artist" || (musicTab() && ["imdb", "runtime"].includes(state.sort))) state.sort = "title";
+    saveFilters();
+  }
   load();
 };
 $("#btn-scan").onclick = () => {
   closeSheet();
   try { audio = audio || new (window.AudioContext || window.webkitAudioContext)(); audio.resume(); } catch { /* inget ljud */ }
+  scanMode = musicTab() ? "music" : "video";
   show(viewScan);
 };
+$("#brand").onclick = (e) => { e.preventDefault(); closeSheet(); window.scrollTo({ top: 0, behavior: "smooth" }); };
 const open = (fn) => () => { closeSheet(); show(fn); };
 $("#btn-menu").onclick = open(viewMenu);
 $("#btn-filter").onclick = open(viewFilter);
 $("#btn-random").onclick = open(viewRandom);
 $("#btn-view").onclick = open(viewDisplay);
 $("#btn-lib").onclick = open(viewLibPicker);
+
+// Kom ihåg fliken mellan besöken (önskelistan börjar alltid om på "Alla")
+const savedTab = store.get("tab", "all");
+if (savedTab !== "wish" && $(`#tabs [data-tab="${savedTab}"]`)) {
+  state.tab = savedTab;
+  $("#tabs .on").classList.remove("on");
+  $(`#tabs [data-tab="${savedTab}"]`).classList.add("on");
+}
 
 applyTheme();
 loadLibs().then(load).catch((e) => toast("Kunde inte ladda samlingen: " + esc(e.message), "bad"));

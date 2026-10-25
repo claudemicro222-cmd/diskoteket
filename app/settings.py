@@ -19,6 +19,8 @@ DEFS = {
     "lookup_mymovies": ("LOOKUP_MYMOVIES", "1", False),
     "lookup_upcitemdb": ("LOOKUP_UPCITEMDB", "1", False),
     "ean_db_token": ("EAN_DB_TOKEN", "", True),
+    "lookup_musicbrainz": ("LOOKUP_MUSICBRAINZ", "1", False),
+    "discogs_token": ("DISCOGS_TOKEN", "", True),
 }
 
 _cache: dict | None = None

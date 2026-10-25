@@ -3,12 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#14161a">
+  <meta name="theme-color" content="#0b0d12">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="mobile-web-app-capable" content="yes">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/static/icon.svg">
-  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <link rel="apple-touch-icon" href="/static/icon-180.png">
   <title>Diskoteket</title>
   <script>
     // Tema direkt, innan sidan ritas, så att den inte blinkar vitt/svart
@@ -19,15 +20,21 @@
 <body>
   <header>
     <div class="top">
-      <div class="brand"><img src="/static/icon.svg" alt=""><h1>Diskoteket</h1></div>
-      <button id="btn-lib" class="lib-btn" aria-label="Byt samling"><span id="lib-name">…</span> ▾</button>
-      <button id="btn-random" class="icon" aria-label="Slumpa en film" title="Slumpa en film">🎲</button>
+      <a class="brand" href="#" id="brand" aria-label="Diskoteket – till början">
+        <img src="/static/icon.svg" alt="">
+        <span class="logo">Disk<span class="logo-o" aria-hidden="true"></span><span class="sr">o</span>teket</span>
+      </a>
+      <button id="btn-lib" class="lib-btn" aria-label="Byt samling"><span id="lib-name">…</span><span class="caret">▾</span></button>
+      <button id="btn-random" class="icon" aria-label="Slumpa en film" title="Slumpa en film">
+        <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="8.5" cy="8.5" r="1.6" fill="currentColor"/><circle cx="15.5" cy="15.5" r="1.6" fill="currentColor"/><circle cx="12" cy="12" r="1.6" fill="currentColor"/></svg></button>
       <button id="btn-view" class="icon" aria-label="Visning och tema" title="Visning och tema">
-        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z" opacity=".9"/></svg></button>
-      <button id="btn-menu" class="icon" aria-label="Meny">☰</button>
+        <svg viewBox="0 0 24 24" width="21" height="21" aria-hidden="true"><path fill="currentColor" d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z" opacity=".9"/></svg></button>
+      <button id="btn-menu" class="icon" aria-label="Meny" title="Meny">
+        <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg></button>
     </div>
     <div class="row tight">
       <div class="search-box">
+        <svg class="search-ico" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M15.5 15.5 20 20" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
         <input id="q" type="search" placeholder="Sök titel…" autocomplete="off">
         <select id="q-field" aria-label="Sök i">
           <option value="title">Titel</option>
@@ -42,12 +49,14 @@
       <button data-tab="all" class="on">Alla</button>
       <button data-tab="movie">Filmer</button>
       <button data-tab="tv">Serier</button>
+      <button data-tab="music">Musik</button>
       <button data-tab="wish">Önskelista</button>
     </nav>
     <div id="active-filters"></div>
-    <div id="count" class="muted small"></div>
   </header>
 
+  <section id="shelf" hidden></section>
+  <div id="count" class="muted small"></div>
   <main id="grid"></main>
   <p id="empty" class="muted center" hidden></p>
 

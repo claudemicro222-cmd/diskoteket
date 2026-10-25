@@ -1,0 +1,40 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Diskoteket",
+        "description": "Adressen till ditt Diskotek, t.ex. http://192.168.1.10:8080. API-nyckeln behövs bara om inloggning är påslagen (Meny → Inloggning i Diskoteket).",
+        "data": { "url": "Adress", "api_key": "API-nyckel" }
+      },
+      "reauth_confirm": {
+        "title": "Ny API-nyckel",
+        "description": "Klistra in API-nyckeln från Meny → Inloggning i Diskoteket.",
+        "data": { "api_key": "API-nyckel" }
+      }
+    },
+    "error": {
+      "cannot_connect": "Kunde inte nå Diskoteket på den adressen.",
+      "invalid_auth": "Fel API-nyckel."
+    },
+    "abort": {
+      "already_configured": "Det här Diskoteket är redan tillagt.",
+      "reauth_successful": "API-nyckeln är uppdaterad."
+    }
+  },
+  "entity": {
+    "sensor": {
+      "total": { "name": "Titlar" },
+      "movies": { "name": "Filmer" },
+      "series": { "name": "Serier" },
+      "seasons": { "name": "Säsonger" },
+      "music": { "name": "Album" },
+      "discs": { "name": "Skivor" },
+      "unwatched": { "name": "Osedda" },
+      "wishlist": { "name": "Önskelista" },
+      "loaned": { "name": "Utlånat" },
+      "overdue": { "name": "Försenade lån" },
+      "value": { "name": "Värde" },
+      "latest": { "name": "Senast tillagd" }
+    }
+  }
+}

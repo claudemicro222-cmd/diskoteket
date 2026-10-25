@@ -111,7 +111,7 @@ async def run():
     with db.connect() as con:
         todo = [dict(r) for r in con.execute(
             "SELECT id, title, series_name, season, year, imdb_id, tmdb_id, kind, enriched FROM items "
-            "WHERE enriched=0 OR (kind='movie' AND enriched=1 AND COALESCE(coll_checked,0)=0)")]
+            "WHERE (enriched=0 AND kind != 'music') OR (kind='movie' AND enriched=1 AND COALESCE(coll_checked,0)=0)")]
     if todo:
         await _run(todo, _first_time, "match")
     else:
@@ -122,9 +122,9 @@ async def refresh_library(lib: int | None, reset: bool = False):
     """Uppdatera metadata för en hel samling (eller alla)."""
     if state["running"] or not tmdb.enabled():
         return
-    s, a = repo._lib(lib, " WHERE ")
+    s, a = repo._lib(lib)
     with db.connect() as con:
-        ids = [r[0] for r in con.execute(f"SELECT id FROM items{s}", a)]
+        ids = [r[0] for r in con.execute(f"SELECT id FROM items WHERE kind != 'music'{s}", a)]
 
     async def one(item_id):
         if not await refresh_item(item_id, reset):
