@@ -28,8 +28,16 @@ def _int(v):
         return None
 
 
+def jellyfin_headers() -> dict:
+    """Jellyfin 10.10+ vill ha nyckeln i Authorization-headern. Det gamla sättet (X-Emby-Token)
+    är avstängt som standard från Jellyfin 12 och ger då '401 Unauthorized'."""
+    key = settings.get("jellyfin_api_key")
+    return {"Authorization": f'MediaBrowser Client="Diskoteket", Device="Server", DeviceId="diskoteket", '
+                             f'Version="4.1", Token="{key}"'}
+
+
 async def fetch_jellyfin() -> list[dict]:
-    async with httpx.AsyncClient(timeout=60, headers={"X-Emby-Token": settings.get("jellyfin_api_key")}) as c:
+    async with httpx.AsyncClient(timeout=60, headers=jellyfin_headers()) as c:
         r = await c.get(f"{_url('jellyfin_url')}/Items", params={
             "IncludeItemTypes": "Movie,Series", "Recursive": "true", "Fields": "ProviderIds"})
         r.raise_for_status()

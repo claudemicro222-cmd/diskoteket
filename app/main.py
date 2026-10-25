@@ -19,7 +19,7 @@ from . import (auth, barcodes, clz_import, covers, db, enrich, history, mediaser
                sharing, tmdb, trash)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "4.1"
+VERSION = "4.1.1"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 

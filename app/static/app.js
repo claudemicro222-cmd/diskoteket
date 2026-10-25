@@ -2413,8 +2413,11 @@ async function viewHA() {
       <li>Sök på <b>Diskoteket</b> i HACS, installera och starta om Home Assistant.</li>
       <li><b>Inställningar → Enheter och tjänster → Lägg till integration → Diskoteket</b>.
         Adress: <code>${esc(url)}</code>${a.enabled ? ` · API-nyckel: se Meny → Inloggning` : ""}.</li>
+      <li>Starta om Home Assistant en gång till och ladda om sidan (Ctrl+F5, eller i mobilappen:
+        Inställningar → Companion app → Felsökning → Återställ frontend-cache).</li>
       <li>Lägg till kortet <b>Diskoteket</b> på en instrumentpanel. Välj detaljnivå i kortets inställningar:
-        kompakt, standard eller detaljerad.</li>
+        kompakt, standard eller detaljerad. Hittar du det inte: lägg till ett manuellt kort med
+        <code>type: custom:diskoteket-card</code>.</li>
     </ol>
     <p class="muted small">Integrationen ger sensorer för filmer, serier, album, osedda, önskelista, utlånat och försenade lån –
       som du kan använda i egna automationer.</p>

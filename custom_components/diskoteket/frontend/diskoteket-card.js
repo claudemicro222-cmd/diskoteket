@@ -1,7 +1,7 @@
 // Diskoteket-kortet för Home Assistant. Följer med integrationen och laddas automatiskt.
 // Detaljnivå väljs i kortets inställningar: kompakt, standard eller detaljerad.
 
-const DK_VERSION = "4.0.0";
+const DK_VERSION = "4.1.1";
 const LEVELS = { compact: "Kompakt", standard: "Standard", detailed: "Detaljerad" };
 const VARIOUS = ["various", "various artists", "va", "blandade artister"];
 

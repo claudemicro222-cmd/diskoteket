@@ -10,6 +10,7 @@ from pathlib import Path
 import aiohttp
 from aiohttp import web
 
+from homeassistant.components.frontend import add_extra_js_url
 from homeassistant.components.http import HomeAssistantView, StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -32,9 +33,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     """Registrera kortet och omslagsvägen en gång, oavsett hur många Diskotek som läggs till."""
     card = Path(__file__).parent / "frontend" / "diskoteket-card.js"
     await hass.http.async_register_static_paths([StaticPathConfig(CARD_URL, str(card), False)])
-    if "frontend" in hass.config.components:
-        from homeassistant.components.frontend import add_extra_js_url
-        add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
+    # Kortet laddas på alla instrumentpaneler. ?v= gör att webbläsaren hämtar nytt efter en uppdatering.
+    add_extra_js_url(hass, f"{CARD_URL}?v={VERSION}")
     hass.http.register_view(DiskoteketPosterView())
     return True
 

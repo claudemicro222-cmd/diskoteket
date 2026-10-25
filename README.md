@@ -196,7 +196,12 @@ Vill du ha bättre träffar på ovanliga utgåvor och vinyl: skapa en gratis nyc
    - **Standard** – siffror för allt, försenade lån och senast tillagd.
    - **Detaljerad** – även omslag för det senast tillagda, samlingar och format.
 
-Kortet följer med integrationen och laddas automatiskt. Integrationen ger också sensorer (filmer, serier, album,
+Kortet följer med integrationen och laddas automatiskt. **Syns inte kortet** när du lägger till ett kort? Starta om
+Home Assistant en gång efter installationen/uppdateringen och ladda sedan om sidan med **Ctrl+F5** (i mobilappen:
+Inställningar → Companion app → Felsökning → *Återställ frontend-cache*). Sök sedan på ”Diskoteket” bland korten, eller
+lägg till ett manuellt kort med `type: custom:diskoteket-card`.
+
+Integrationens egen ikon och logotyp visas från **Home Assistant 2026.3**. Integrationen ger också sensorer (filmer, serier, album,
 osedda, önskelista, utlånat, försenade lån, värde, senast tillagd) som går att använda i egna automationer.
 
 ### Utan integration

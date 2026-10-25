@@ -1,15 +1,20 @@
 # Önskelista och status
 
-Senast uppdaterad: 2026-10-25. Version **4.0** är pushad och publicerad (`:latest` och `:4.0`).
-Arbetssätt från nu: ändringar testas lokalt (testserver på port 8765 med kopia av samlingen) och pushas
-först när ägaren säger att appen är klar.
+Senast uppdaterad: 2026-10-25. Version **4.1.1** är pushad (`:latest`, `:4.1.1`; taggar `v4.0`/`v4.1`/`v4.1.1`):
+Jellyfin-inloggning för Jellyfin 12, ikon/logotyp för Home Assistant (`brand/`, HA 2026.3+) och säkrare laddning av HA-kortet.
+Arbetssätt: ändringar testas lokalt (testserver på port 8765 med kopia av samlingen) och pushas
+först när ägaren säger till.
 
 ## Önskemål till nästa version (bygg först när ägaren säger till)
 
-_Inga just nu._ Version **4.1** (alla 21 punkter från 2026-10-25) är byggd och ligger lokalt för test –
-**inte pushad**. Testa på `http://localhost:8765`.
+1. **Ta bort / tömma den enda samlingen** – i dag visas ”Ta bort” bara när det finns flera samlingar, utan förklaring.
+   - ”Ta bort” visas alltid. Är det den enda samlingen förklarar appen det och skapar automatiskt en ny tom samling.
+   - Ny knapp **”Töm samlingen”**: tar bort alla titlar och all musik men behåller samlingen (och namnet).
+   - Säkerhetskopia tas först i båda fallen, precis som i dag.
 
 ## Att testa / följa upp
+
+- **Jellyfin (4.1.1)** är bara testad mot en låtsas-server – kontrollera ”Testa Jellyfin” mot riktiga servern.
 
 - **4.1 – TMDB-delarna** (trailer, var man kan streama, liknande filmer, skådespelarsida, saknade säsonger,
   släppbevakning) är bara testade mot påhittade TMDB-svar – testkopian saknar TMDB-nyckel. Prova på riktigt med nyckel.
