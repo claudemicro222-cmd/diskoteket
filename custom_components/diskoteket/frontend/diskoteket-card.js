@@ -151,8 +151,8 @@ function findEntity(hass) {
 }
 
 const STYLE = `<style>
-  :host { --dk-accent: #f5b301; --dk-accent2: #ff8a1f; }
-  ha-card { overflow: hidden; position: relative; }
+  :host { display: block; min-width: 0; --dk-accent: #f5b301; --dk-accent2: #ff8a1f; }
+  ha-card { overflow: hidden; position: relative; container-type: inline-size; }
   ha-card::before { content: ""; position: absolute; inset: 0; pointer-events: none;
     background: radial-gradient(120% 140px at 0% 0%, color-mix(in srgb, var(--dk-accent) 14%, transparent), transparent); }
   .wrap { position: relative; padding: 16px; }
@@ -176,7 +176,7 @@ const STYLE = `<style>
   .tile { display: flex; align-items: center; gap: 10px; padding: 10px; border-radius: 12px; background: var(--secondary-background-color); min-width: 0; }
   .tile ha-icon { --mdc-icon-size: 22px; color: var(--secondary-text-color); flex: none; }
   .tile.hl ha-icon { color: var(--dk-accent); }
-  .tile b { display: block; font-size: 1.15rem; line-height: 1.1; }
+  .tile b { display: block; font-size: 1.15rem; line-height: 1.1; white-space: nowrap; }
   .tile span { font-size: .72rem; color: var(--secondary-text-color); display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .alert { display: flex; gap: 10px; align-items: flex-start; margin-top: 12px; padding: 10px 12px; border-radius: 12px;
     background: color-mix(in srgb, var(--error-color, #db4437) 14%, transparent); font-size: .85rem; }
@@ -199,7 +199,18 @@ const STYLE = `<style>
   .bar i { display: block; height: 100%; border-radius: 99px; background: linear-gradient(90deg, var(--dk-accent), var(--dk-accent2)); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { font-size: .75rem; padding: 3px 9px; border-radius: 99px; background: var(--secondary-background-color); }
-  @media (max-width: 420px) { .tiles { grid-template-columns: repeat(2, 1fr); } }
+  .title { white-space: nowrap; }
+  /* Smala kort (t.ex. en kolumn i Home Assistant): mindre siffra, kortare rader, två rutor i bredd */
+  @container (max-width: 460px) {
+    .wrap { padding: 14px; }
+    .head svg { width: 38px; height: 38px; }
+    .title { font-size: 1.1rem; }
+    .sub { font-size: .78rem; }
+    .big b { font-size: 1.45rem; }
+    .big span { font-size: .62rem; }
+    .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
+  @container (max-width: 330px) { .big { display: none; } }
 </style>`;
 
 // ---------- Redigeraren (kortets inställningar) ----------

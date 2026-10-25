@@ -10,6 +10,7 @@ on:
     paths-ignore:          # ändringar i bara dokumentation, Unraid-mallen eller HA-integrationen bygger ingen ny avbild
       - "**.md"
       - "unraid/**"
+      - "docs/**"
       - "custom_components/**"
       - "hacs.json"
   pull_request:

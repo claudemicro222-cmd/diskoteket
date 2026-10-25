@@ -11,6 +11,28 @@ Egen film-, serie- och musiksamling som du kör själv, till exempel som Docker-
 Mobilanpassad webbsida med streckkodsskanning, flera samlingar, import från CLZ Movies och CLZ Music,
 omslag från TMDB och MusicBrainz, och koppling till Plex/Jellyfin och Home Assistant.
 
+## Så ser det ut
+
+![Startsidan med ”Nyligen tillagt” och hela samlingen](docs/screenshots/01-start.jpg)
+
+![Musikfliken med skivomslag](docs/screenshots/02-musik.jpg)
+
+<table>
+  <tr>
+    <td align="center" width="25%"><img src="docs/screenshots/03-mobil-bokstavslist.jpg" alt="Mobilen med bokstavslisten till höger"><br><sub>Bokstavslist – hoppa direkt till en bokstav</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/04-mobil-film.jpg" alt="En film med trailer, regissör och skådespelare"><br><sub>Filmsidan – trailer, skådespelare, filmserie</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/05-mobil-album.jpg" alt="Ett album med låtlista"><br><sub>Album med låtlista från MusicBrainz</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/06-mobil-statistik.jpg" alt="Statistik för musiken"><br><sub>Statistik för film, musik och värde</sub></td>
+  </tr>
+</table>
+
+<table>
+  <tr>
+    <td align="center" width="30%"><img src="docs/screenshots/07-mobil-arsoversikt.jpg" alt="Årsöversikt"><br><sub>”Ditt år i Diskoteket”</sub></td>
+    <td align="center" width="70%"><img src="docs/screenshots/08-home-assistant.jpg" alt="Home Assistant-kortet i tre detaljnivåer"><br><sub>Home Assistant-kortet: kompakt, standard och detaljerad</sub></td>
+  </tr>
+</table>
+
 ## Funktioner
 
 - **Skanna streckkoder** med mobilkameran. Okända filmkoder slås upp i MyMovies (nordiska utgåvor),
