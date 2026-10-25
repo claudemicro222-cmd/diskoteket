@@ -104,6 +104,12 @@ def parse_row(row: dict) -> dict:
                        "IMDb Number", "Is TV Series", "Loaned To", "Loan Date", "Due Date",
                        "Purchase Price"}
     item["extra"] = {k: v for k, v in row.items() if k not in used and v}
+    # Bildlänk till omslaget, om exporten har en (t.ex. "Front Cover", "Cover Front", "Image URL")
+    for k, v in row.items():
+        if re.search(r"cover|image|poster|bild|omslag", k, re.I) and re.match(r"^https?://\S+$", v or "") \
+                and not re.search(r"back|bak", k, re.I):
+            item["cover_url"] = v
+            break
     return item
 
 
@@ -112,14 +118,17 @@ def import_csv(raw: bytes, library_id: int = 1) -> dict:
     reader = csv.DictReader(io.StringIO(text))
     added = updated = 0
     errors = []
+    cover_urls = []
     with db.connect() as con:
         for i, row in enumerate(reader, start=2):
             try:
                 item = parse_row(row)
                 item["library_id"] = library_id
-                _, new = db.upsert(con, item)
+                item_id, new = db.upsert(con, item)
+                if item.get("cover_url"):
+                    cover_urls.append((item_id, item["cover_url"]))
                 added += new
                 updated += not new
             except Exception as e:  # en trasig rad ska inte stoppa hela importen
                 errors.append(f"Rad {i}: {e}")
-    return {"added": added, "updated": updated, "errors": errors[:20]}
+    return {"added": added, "updated": updated, "errors": errors[:20], "cover_urls": cover_urls}

@@ -1,8 +1,10 @@
-# För test i VM:en (Docker Desktop). På Unraid används mallen i mappen unraid/ i stället.
+# För test på en vanlig dator (t.ex. i VM:en med Docker Desktop).
+# På Unraid används mallen i unraid/ i stället – se README.
+#
+# Uppdatera till senaste versionen:   docker compose pull && docker compose up -d
 services:
   diskoteket:
-    build: .
-    image: diskoteket:latest
+    image: ghcr.io/claudemicro222-cmd/diskoteket:latest
     container_name: diskoteket
     ports:
       - "8080:8080"
@@ -10,9 +12,6 @@ services:
       - PUID=1000
       - PGID=1000
       - TZ=Europe/Stockholm
-    env_file:
-      - path: .env        # valfri – gamla inställningar från version 1–2 läses in som startvärden
-        required: false
     volumes:
-      - ./data:/config    # här hamnar databas, omslag, säkerhetskopior och inställningar
+      - ./data:/config    # databas, omslag, säkerhetskopior och inställningar
     restart: unless-stopped

@@ -2,3 +2,4 @@ data/
 appdata/
 .env
 __pycache__/
+*.pyc

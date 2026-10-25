@@ -79,7 +79,7 @@ def delete_library(lib_id):
 # ---------- Listor ----------
 
 def list_items(lib=None, q="", kind="", status="owned", format="", genre="", location="", watched="",
-               digital="", sort="title", missing_poster=False, collection_id=None):
+               digital="", sort="title", missing_poster=False, collection_id=None, field="title"):
     sql = f"SELECT {LIST_COLS}, {DIGITAL} AS digital FROM items WHERE 1=1"
     s, args = _lib(lib)
     sql += s
@@ -118,35 +118,46 @@ def list_items(lib=None, q="", kind="", status="owned", format="", genre="", loc
     sql += " ORDER BY " + SORTS.get(sort, SORTS["title"])
     with db.connect() as con:
         rows = [dict(r) for r in con.execute(sql, args)]
-    return search_filter(rows, q) if q else rows
+    return search_filter(rows, q, field) if q else rows
 
 
-def search_filter(rows, q):
+SEARCH_FIELDS = ("title", "actors", "director", "all")
+
+
+def search_filter(rows, q, field="title"):
     """Fritextsökning. Görs i Python så att å/ä/ö fungerar oavsett stora/små bokstäver.
-    Titlar matchar var som helst, men personnamn bara i början av ett ord –
-    annars ger 'bert' alla filmer med Robert, Albert och Herbert."""
-    q = q.strip().lower()
-    word = re.compile(r"(?:^|[\s\-.'(])" + re.escape(q))
-    digits = re.sub(r"\D", "", q)
+    Sökordet måste stå i början av ett ord: 'bert' hittar 'Bert' och 'Berts dagbok',
+    men inte 'Albert', 'Herbert' eller 'Robert'.
+    field: title (standard), actors, director eller all."""
+    q = re.sub(r"\s+", " ", q.strip().lower())
+    if field not in SEARCH_FIELDS:
+        field = "title"
+    word = re.compile(r"(?<!\w)" + re.escape(q))
+    digits = re.sub(r"[\s-]", "", q)
+    is_code = digits.isdigit() and len(digits) >= 8
     scored = []
     for r in rows:
-        titles = [(r.get(k) or "").lower() for k in ("title", "original_title", "series_name")]
-        people = [n.strip().lower() for k in ("actors", "director") for n in (r.get(k) or "").split(" | ") if n.strip()]
-        if digits and len(digits) >= 8 and r.get("barcode") and digits.lstrip("0") == r["barcode"].lstrip("0"):
-            score = 0
-        elif any(t.startswith(q) for t in titles):
-            score = 1
-        elif any(word.search(t) for t in titles):
-            score = 2
-        elif any(q in t for t in titles):
-            score = 3
-        elif any(word.search(p) for p in people):
-            score = 4
-        else:
+        if is_code:  # en streckkod hittas oavsett vald sökning
+            if r.get("barcode") and digits.lstrip("0") == r["barcode"].lstrip("0"):
+                scored.append((0, r))
             continue
+        titles = [(r.get(k) or "").lower() for k in ("title", "original_title", "series_name")]
+        names = lambda k: [n.strip().lower() for n in (r.get(k) or "").split(" | ") if n.strip()]  # noqa: E731
+        score = None
+        if field in ("title", "all"):
+            if any(t.startswith(q) for t in titles):
+                score = 1
+            elif any(word.search(t) for t in titles):
+                score = 2
+        if score is None and field in ("actors", "all") and any(word.search(n) for n in names("actors")):
+            score = 3
+        if score is None and field in ("director", "all") and any(word.search(n) for n in names("director")):
+            score = 3
+        if score is not None:
+            scored.append((score, r))
+    for _, r in scored:
         for k in ("original_title", "actors", "director"):
             r.pop(k, None)
-        scored.append((score, r))
     scored.sort(key=lambda x: x[0])  # stabil: inom samma nivå behålls vald sortering
     return [r for _, r in scored]
 

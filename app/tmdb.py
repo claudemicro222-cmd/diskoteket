@@ -187,15 +187,3 @@ def clean_product_title(t: str) -> str:
     t = re.sub(r"\b(s[äa]song|season)\s*\d+\b", " ", t, flags=re.I)
     t = re.sub(r"[-–:|/,+&]+\s*$", "", t.strip())
     return re.sub(r"\s+", " ", t).strip(" -–:|+")
-
-
-async def barcode_lookup(code: str) -> str | None:
-    """Försöker få fram en produkttitel för en streckkod. UPCitemdb: gratis, 100 uppslag/dag."""
-    try:
-        async with httpx.AsyncClient(timeout=10) as c:
-            r = await c.get("https://api.upcitemdb.com/prod/trial/lookup", params={"upc": code})
-            if r.status_code == 200 and r.json().get("items"):
-                return r.json()["items"][0].get("title")
-    except httpx.HTTPError:
-        pass
-    return None

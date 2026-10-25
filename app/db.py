@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS libraries (
     created TEXT DEFAULT (date('now'))
 );
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS barcodes (      -- inlärda streckkoder: kod -> film/serie på TMDB
+    code TEXT PRIMARY KEY,
+    tmdb_id INTEGER, kind TEXT, title TEXT, year INTEGER, format TEXT,
+    source TEXT, updated TEXT DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS digital (
     source TEXT NOT NULL,       -- 'plex' eller 'jellyfin'
     kind TEXT,                  -- 'movie' eller 'tv' (TMDB-ID kan krocka mellan filmer och serier)

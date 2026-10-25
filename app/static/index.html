@@ -27,7 +27,15 @@
       <button id="btn-menu" class="icon" aria-label="Meny">☰</button>
     </div>
     <div class="row tight">
-      <input id="q" type="search" placeholder="Sök titel, skådespelare, streckkod…" autocomplete="off">
+      <div class="search-box">
+        <input id="q" type="search" placeholder="Sök titel…" autocomplete="off">
+        <select id="q-field" aria-label="Sök i">
+          <option value="title">Titel</option>
+          <option value="actors">Skådespelare</option>
+          <option value="director">Regissör</option>
+          <option value="all">Allt</option>
+        </select>
+      </div>
       <button id="btn-filter" class="btn filter-btn">Filter</button>
     </div>
     <nav id="tabs">

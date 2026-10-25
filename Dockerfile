@@ -1,7 +1,8 @@
 FROM python:3.12-slim
 
 LABEL org.opencontainers.image.title="Diskoteket" \
-      org.opencontainers.image.description="Egen film- och seriesamling med streckkodsskanning"
+      org.opencontainers.image.description="Egen film- och seriesamling med streckkodsskanning" \
+      org.opencontainers.image.source="https://github.com/claudemicro222-cmd/diskoteket"
 
 WORKDIR /srv
 COPY requirements.txt .

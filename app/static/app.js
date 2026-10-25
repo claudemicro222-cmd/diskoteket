@@ -13,14 +13,15 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* privat läge */ } },
 };
 
-const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", location: "", watched: "", digital: "", loaned: false };
+const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", watched: "", digital: "", loaned: false };
 let state = {
-  tab: "all", q: "", items: [], facets: null, libs: [],
+  tab: "all", q: "", field: "title", items: [], facets: null, libs: [],
   lib: store.get("lib", null),               // samlingens id, eller "all"
   view: store.get("view", "grid-m"),          // grid-s, grid-m, grid-l, list, compact
   theme: store.get("theme", "auto"),          // auto, light, dark
   ...DEFAULT_FILTERS, ...store.get("filters", {}),
 };
+delete state.location; // platsfiltret är borttaget – rensa ev. gammalt sparat värde
 
 async function api(path, opts = {}) {
   if (opts.json !== undefined) {
@@ -229,8 +230,8 @@ function viewLibDelete(id) {
 // ---------- Rutnätet ----------
 
 function query() {
-  const p = { q: state.q, sort: state.sort, format: state.format, genre: state.genre,
-    location: state.location, watched: state.watched, digital: state.digital };
+  const p = { q: state.q, field: state.field, sort: state.sort, format: state.format, genre: state.genre,
+    watched: state.watched, digital: state.digital };
   p.status = state.tab === "wish" ? "wish" : state.loaned ? "loaned" : "owned";
   if (state.tab === "movie" || state.tab === "tv") p.kind = state.tab;
   p.lib = state.lib === "all" ? "all" : state.lib;
@@ -321,14 +322,13 @@ function rowHtml(c, i) {
 }
 
 function activeFilterCount() {
-  return ["format", "genre", "location", "watched", "digital"].filter((k) => state[k]).length + (state.loaned ? 1 : 0);
+  return ["format", "genre", "watched", "digital"].filter((k) => state[k]).length + (state.loaned ? 1 : 0);
 }
 
 function renderActiveFilters() {
   const labels = [];
   if (state.format) labels.push(["format", state.format]);
   if (state.genre) labels.push(["genre", state.genre]);
-  if (state.location) labels.push(["location", state.location]);
   if (state.watched) labels.push(["watched", state.watched === "1" ? "Sedda" : "Osedda"]);
   if (state.digital) labels.push(["digital", state.digital === "yes" ? "Finns digitalt" : "Bara fysiskt"]);
   if (state.loaned) labels.push(["loaned", "Utlånade"]);
@@ -343,8 +343,8 @@ function renderActiveFilters() {
 }
 
 function saveFilters() {
-  const { sort, format, genre, location, watched, digital, loaned } = state;
-  store.set("filters", { sort, format, genre, location, watched, digital, loaned });
+  const { sort, format, genre, watched, digital, loaned } = state;
+  store.set("filters", { sort, format, genre, watched, digital, loaned });
 }
 
 async function facets(fresh = false) {
@@ -379,6 +379,7 @@ function openSheet(html) {
 function closeSheet() {
   stopScan();
   stack = [];
+  addedThisRound = 0;
   $("#sheet").hidden = $("#sheet-bg").hidden = true;
   document.body.classList.remove("sheet-open");
 }
@@ -402,7 +403,6 @@ async function viewFilter() {
         ["year_asc", "År (äldst först)"], ["rating", "Mitt betyg"], ["imdb", "IMDb-betyg"], ["runtime", "Längd (kortast först)"]], state.sort)}
       ${sel("f-format", "Format", [["", "Alla format"], ...f.formats.map((x) => [x, x])], state.format)}
       ${sel("f-genre", "Genre", [["", "Alla genrer"], ...f.genres.map((x) => [x, x])], state.genre)}
-      ${sel("f-location", "Plats", [["", "Alla platser"], ...f.locations.map((x) => [x, x])], state.location)}
       ${sel("f-watched", "Sedd", [["", "Alla"], ["0", "Osedda"], ["1", "Sedda"]], state.watched)}
       ${f.digital ? sel("f-digital", "Plex/Jellyfin", [["", "Alla"], ["yes", "Finns digitalt"], ["no", "Bara fysiskt"]], state.digital) : ""}
       <label class="check"><input type="checkbox" id="f-loaned" ${state.loaned ? "checked" : ""}> Visa bara utlånade</label>
@@ -411,7 +411,7 @@ async function viewFilter() {
     <button class="btn" id="f-reset">Nollställ</button>`);
   $("#f-apply").onclick = () => {
     state.sort = $("#f-sort").value; state.format = $("#f-format").value; state.genre = $("#f-genre").value;
-    state.location = $("#f-location").value; state.watched = $("#f-watched").value;
+    state.watched = $("#f-watched").value;
     state.digital = $("#f-digital")?.value || ""; state.loaned = $("#f-loaned").checked;
     saveFilters(); closeSheet(); load();
   };
@@ -464,6 +464,7 @@ async function viewItem(id) {
       <button class="btn" id="b-edit">Redigera</button>
       <button class="btn" id="b-refresh">Uppdatera metadata</button>
       <button class="btn" id="b-poster">Byt omslag</button>
+      <button class="btn" id="b-own">Eget omslag</button>
       <button class="btn" id="b-rematch">Fel film?</button>
       ${it.imdb_id ? `<a class="btn" href="https://www.imdb.com/title/${esc(it.imdb_id)}/" target="_blank" rel="noopener">IMDb</a>` : ""}
       <button class="btn danger" id="b-del">Ta bort</button>
@@ -481,6 +482,7 @@ async function viewItem(id) {
   $("#b-edit").onclick = () => show(viewEdit, it);
   $("#b-refresh").onclick = () => show(viewRefreshItem, it);
   $("#b-poster").onclick = () => show(viewPosters, it);
+  $("#b-own").onclick = () => show(viewOwnCover, it);
   $("#b-rematch").onclick = () => show(viewRematch, it);
   $("#b-coll") && ($("#b-coll").onclick = (e) => { e.preventDefault(); show(viewCollection, it.collection_id); });
   $("#b-del").onclick = async () => {
@@ -596,6 +598,77 @@ async function viewPosters(it) {
     toast("Omslaget bytt");
     back(); load();
   }));
+}
+
+// ---------- Egna omslag ----------
+
+function viewOwnCover(it) {
+  openSheet(`
+    <h2>Eget omslag</h2>
+    <p class="muted">${esc(it.title)}</p>
+    <div class="cover-prev">${poster(it.poster_path, it.title)}<div id="cov-new"></div></div>
+    <div class="cover-btns">
+      <label class="btn primary file-btn">📷 Ta foto<input type="file" id="cov-cam" accept="image/*" capture="environment" hidden></label>
+      <label class="btn file-btn">🖼 Välj bild<input type="file" id="cov-file" accept="image/*" hidden></label>
+    </div>
+    <label class="form-label">…eller klistra in en bildadress</label>
+    <div class="row"><input id="cov-url" type="url" placeholder="https://…/omslag.jpg">
+      <button class="btn" id="cov-url-go">Hämta</button></div>
+    <div id="cov-msg"></div>
+    <p class="muted small">Bilden sparas i appdata och skrivs aldrig över av ”Uppdatera metadata”. Fotografera rakt framifrån –
+      i rutnätet visas omslaget beskuret till omslagsformat.</p>`);
+  const send = async (opts, previewUrl) => {
+    $("#cov-msg").innerHTML = `<p class="muted">Sparar…</p>`;
+    if (previewUrl) $("#cov-new").innerHTML = `<img class="poster" src="${previewUrl}" alt="">`;
+    try {
+      await api(`/api/items/${it.id}/cover`, { method: "POST", ...opts });
+      toast("Eget omslag sparat", "ok");
+      back(); load();
+    } catch (e) { $("#cov-msg").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
+  for (const id of ["cov-cam", "cov-file"]) {
+    $("#" + id).onchange = (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const fd = new FormData(); fd.append("file", file);
+      send({ body: fd }, URL.createObjectURL(file));
+    };
+  }
+  $("#cov-url-go").onclick = () => $("#cov-url").value.trim() && send({ json: { url: $("#cov-url").value.trim() } });
+}
+
+async function viewCoverImport() {
+  openSheet(`
+    <h2>Importera omslag</h2>
+    <p class="muted small">Välj många bilder på en gång, eller en zip-fil. Döp bilderna efter <b>streckkod</b>
+      (<code>7319980033032.jpg</code>) eller <b>titel</b>, gärna med år (<code>Evil Dead (1981).jpg</code>),
+      så kopplas de till rätt film automatiskt.</p>
+    <label class="form-label">Samling</label>
+    <select id="ci-lib">${libOptions(currentLibId())}<option value="">Alla samlingar</option></select>
+    <label class="check"><input type="checkbox" id="ci-missing" checked> Bara titlar som saknar omslag</label>
+    <input type="file" id="ci-files" accept="image/*,.zip" multiple>
+    <button class="btn primary" id="ci-go">Importera</button>
+    <div id="ci-res"></div>`);
+  $("#ci-go").onclick = async () => {
+    const files = $("#ci-files").files;
+    if (!files.length) return;
+    const fd = new FormData();
+    for (const f of files) fd.append("files", f);
+    fd.append("lib", $("#ci-lib").value);
+    fd.append("only_missing", $("#ci-missing").checked ? "1" : "0");
+    $("#ci-res").innerHTML = `<p class="muted">Läser in ${files.length} ${files.length === 1 ? "fil" : "filer"}…</p>`;
+    try {
+      const r = await api("/api/covers/import", { method: "POST", body: fd });
+      const sec = (title, list, fmt) => list.length ? `<h3>${title} (${list.length})</h3><div class="small">${list.map(fmt).join("<br>")}</div>` : "";
+      $("#ci-res").innerHTML = `<div class="notice ${r.matched.length ? "ok" : ""}">${r.matched.length} omslag kopplade.</div>
+        ${sec("Kopplade", r.matched, (m) => `✓ ${esc(m.title)} <span class="muted">← ${esc(m.file)}</span>`)}
+        ${sec("Hittade ingen film", r.unmatched, (f) => esc(f))}
+        ${sec("Flera möjliga filmer – lägg till året i filnamnet", r.ambiguous, (a) => `${esc(a.file)} <span class="muted">→ ${esc(a.titles.join(", "))}</span>`)}
+        ${sec("Hade redan omslag", r.skipped, (m) => `${esc(m.title)} <span class="muted">← ${esc(m.file)}</span>`)}
+        ${sec("Fel", r.errors, (m) => `${esc(m.file)}: ${esc(m.error)}`)}`;
+      load();
+    } catch (e) { $("#ci-res").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
 }
 
 function viewRematch(it) {
@@ -767,22 +840,40 @@ function viewScan() {
       store.set(queueKey(), q);
       renderQueue();
       toast(`Ny: ${code} – lagd i kön`);
+      resolveQueued(code);
     }
   }, (text) => show(viewAdd, { query: text }));
 }
 
+// Kön från serieskanning. Titlarna slås upp i bakgrunden så att du ser vad som ligger där.
 const queueKey = () => `scanQueue-${scanLib()}`;
 const queue = () => store.get(queueKey(), []);
+const queueInfo = () => store.get("scanInfo", {});
+async function resolveQueued(code) {
+  try {
+    const r = await api(`/api/barcode/${code}?lib=${scanLib()}`);
+    const m = r.match;
+    const info = queueInfo();
+    info[code] = m ? { title: m.title, year: m.year, poster: m.poster_path, src: m.source }
+      : { title: r.product_title || null, unknown: !r.product_title };
+    store.set("scanInfo", info);
+    renderQueue();
+  } catch { /* visas som okänd */ }
+}
 function renderQueue() {
   const el = $("#queue");
   if (!el) return;
-  const q = queue();
-  el.innerHTML = q.length ? `<h3>Att lägga till (${q.length})</h3>` + q.map((c) => `
-    <div class="list-item q" data-code="${c}"><div class="grow">${c}</div><span class="muted">Lägg till ›</span>
-    <button class="icon x" data-rm="${c}" aria-label="Ta bort ur kön">✕</button></div>`).join("") : "";
+  const q = queue(), info = queueInfo();
+  el.innerHTML = q.length ? `<h3>Att lägga till (${q.length})</h3>` + q.map((c) => {
+    const i = info[c];
+    const label = !i ? `<span class="muted">Letar…</span>` : i.title ? `${esc(i.title)}${i.year ? ` (${i.year})` : ""}` : `<span class="muted">Okänd – sök på titel</span>`;
+    return `<div class="list-item q" data-code="${c}">${i?.poster ? `<img class="poster thumb" src="${TMDB_IMG}w92${esc(i.poster)}" alt="">` : `<div class="poster none thumb"></div>`}
+      <div class="grow"><div class="li-title">${label}</div><div class="muted small">${c}</div></div><span class="muted">Lägg till ›</span>
+      <button class="icon x" data-rm="${c}" aria-label="Ta bort ur kön">✕</button></div>`;
+  }).join("") : "";
   $$("[data-code]", el).forEach((r) => (r.onclick = (e) => {
-    if (e.target.dataset.rm) {
-      store.set(queueKey(), queue().filter((x) => x !== e.target.dataset.rm));
+    if (e.target.closest("[data-rm]")) {
+      removeFromQueue(e.target.closest("[data-rm]").dataset.rm);
       renderQueue(); return;
     }
     stopScan(); show(viewCode, r.dataset.code);
@@ -791,7 +882,7 @@ function renderQueue() {
 const removeFromQueue = (code) => store.set(queueKey(), queue().filter((c) => c !== code));
 
 async function viewCode(code) {
-  openSheet(`<h2>Streckkod ${esc(code)}</h2><p class="muted">Letar…</p>`);
+  openSheet(`<h2>Streckkod ${esc(code)}</h2><p class="muted">Letar i dina samlingar, MyMovies och fler källor…</p>`);
   let r;
   try { r = await api(`/api/barcode/${code}?lib=${scanLib()}`); }
   catch (e) { return openSheet(`<h2>Streckkod ${esc(code)}</h2><div class="notice bad">Kunde inte slå upp streckkoden: ${esc(e.message)}</div>`); }
@@ -802,53 +893,92 @@ async function viewCode(code) {
       <div class="notice ${wish ? "star" : "ok"}">Streckkod ${esc(code)} · ${esc(libName(scanLib()))}</div>` +
       r.existing.map((it) => listItem(it)).join("") +
       (wish ? `<button class="btn primary" id="b-buy">Köpt! Flytta till samlingen</button>` : "") +
-      `<button class="btn" id="b-again">Skanna nästa</button>`);
+      `<button class="btn" id="b-again">${queue().length ? "Nästa i kön" : "Skanna nästa"}</button>`);
     bindOpen();
-    $("#b-again").onclick = () => { stack = []; show(viewScan); };
+    $("#b-again").onclick = () => nextAfterAdd(code);
     $("#b-buy") && ($("#b-buy").onclick = async () => {
       for (const it of r.existing) await patch(it.id, { collection_status: "In Collection", added_date: today() });
-      toast("Flyttad till samlingen"); load(); $("#b-again").onclick();
+      toast("Flyttad till samlingen"); load(); nextAfterAdd(code);
     });
     return;
   }
-  viewAdd({ query: r.query, barcode: code, candidates: r.candidates, productTitle: r.product_title });
+  viewAdd({ query: r.query, barcode: code, candidates: r.candidates, productTitle: r.product_title, match: r.match, tried: r.tried });
 }
 
-// Lägg till: sök på TMDB och välj
-async function viewAdd({ query = "", barcode = null, candidates = null, productTitle = null }) {
+// Efter en tillagd titel i fortsätt-läget: nästa kod i kön, annars tillbaka till kameran
+function nextAfterAdd(code) {
+  if (code) removeFromQueue(code);
+  const next = queue()[0];
+  stack = [];
+  if (next) show(viewCode, next); else show(viewScan);
+}
+
+let addedThisRound = 0;
+const FORMATS = (f) => [...new Set(["DVD", "Blu-ray", "Blu-ray 3D", "4K UHD", "Digital", "VHS", ...f.formats])];
+
+// Lägg till: bästa träff från streckkoden, eller sök på TMDB och välj
+async function viewAdd({ query = "", barcode = null, candidates = null, productTitle = null, match = null, tried = [] }) {
   const f = await facets();
   const last = store.get("lastAdd", { format: "DVD", location: "" });
+  const keep = store.get("keepAdding", false);
+  const fmt = match?.format || last.format;
+  const webSearch = barcode ? `<a class="btn small web" href="https://www.google.com/search?q=${encodeURIComponent(barcode)}" target="_blank" rel="noopener">Sök streckkoden på nätet ↗</a>` : "";
+  let head = "";
+  if (barcode && match) {
+    head = `<div class="best">
+      ${match.poster_path ? `<img class="poster" src="${TMDB_IMG}w185${esc(match.poster_path)}" alt="">` : `<div class="poster none"></div>`}
+      <div class="grow"><div class="muted small">Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}</div>
+        <h3>${esc(match.title)}</h3>
+        <div class="muted">${match.year || ""} · ${match.type === "tv" ? "Serie" : "Film"}${match.original_title && match.original_title !== match.title ? ` · ${esc(match.original_title)}` : ""}</div>
+        <button class="btn primary" id="b-best">＋ Lägg till</button></div></div>
+      <p class="muted small">Inte rätt film? Sök nedan.</p>`;
+  } else if (barcode) {
+    head = `<div class="notice">Streckkod ${esc(barcode)}${productTitle ? `<br><span class="muted">Hittade: ${esc(productTitle)}</span>`
+      : `<br><span class="muted">Okänd streckkod${tried.length ? ` (letade i ${esc(tried.join(", "))})` : ""} – sök på titeln nedan.</span>`}
+      <div>${webSearch}</div></div>`;
+  }
   openSheet(`
-    <h2>${barcode ? "Ny titel" : "Lägg till"}</h2>
-    ${barcode ? `<div class="notice">Streckkod ${esc(barcode)}${productTitle ? `<br><span class="muted">Hittade: ${esc(productTitle)}</span>` : "<br><span class=muted>Okänd streckkod – sök på titeln nedan.</span>"}</div>` : ""}
-    <div class="row"><input id="sq" type="text" value="${esc(query || "")}" placeholder="Titel">
+    <h2>${barcode ? (match ? "Hittad!" : "Ny titel") : "Lägg till"}</h2>
+    ${addedThisRound ? `<div class="added-count">✓ ${addedThisRound} tillagda ${queue().length && barcode ? `· ${queue().length} kvar i kön` : ""}</div>` : ""}
+    ${head}
+    <div class="row"><input id="sq" type="text" value="${esc(query || "")}" placeholder="Titel (gärna med år, t.ex. Alien 1979)">
       <button class="btn primary" id="b-sq">Sök</button></div>
     <div class="row">
-      <select id="fmt">${[...new Set(["DVD", "Blu-ray", "Blu-ray 3D", "4K UHD", "Digital", "VHS", ...f.formats])].map((x) => option(x, x, last.format)).join("")}</select>
+      <select id="fmt">${FORMATS(f).map((x) => option(x, x, fmt)).join("")}</select>
       <input id="season" type="number" min="1" placeholder="Säsong (serier)">
     </div>
     <div class="row"><input id="loc" type="text" list="a-locs" placeholder="Plats" value="${esc(last.location)}">
       <datalist id="a-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
       ${state.libs.length > 1 ? `<select id="add-lib">${libOptions(scanLib())}</select>` : ""}</div>
     <label class="check"><input type="checkbox" id="wish"> ★ Lägg på önskelistan i stället</label>
-    <div id="results"></div>`);
+    <label class="check"><input type="checkbox" id="keep" ${keep ? "checked" : ""}> Fortsätt lägga till fler efter den här</label>
+    <div id="results"></div>
+    ${!barcode ? `<p class="small"><a href="#" id="b-bulk">Har du många titlar? Klistra in en lista ›</a></p>` : ""}
+    ${addedThisRound ? `<button class="btn" id="b-done">Klar</button>` : ""}`);
+  $("#keep").onchange = (e) => store.set("keepAdding", e.target.checked);
+  $("#b-best") && ($("#b-best").onclick = (e) => addCandidate(match, barcode, e.target.closest(".best")));
+  $("#b-bulk") && ($("#b-bulk").onclick = (e) => { e.preventDefault(); show(viewBulkAdd); });
+  $("#b-done") && ($("#b-done").onclick = () => { addedThisRound = 0; closeSheet(); });
   const renderList = (list) => {
     $("#results").innerHTML = list.length ? list.map(candidate).join("") : `<p class="muted">Inga träffar. Prova en annan titel.</p>`;
     $$("#results .list-item").forEach((el) => (el.onclick = () => addCandidate(list[el.dataset.i], barcode, el)));
   };
   $("#b-sq").onclick = async () => {
+    if (!$("#sq").value.trim()) return $("#sq").focus();
     $("#results").innerHTML = `<p class="muted">Söker…</p>`;
     try { renderList(await api(`/api/search?q=${encodeURIComponent($("#sq").value)}`)); }
     catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   };
   $("#sq").onkeydown = (e) => e.key === "Enter" && $("#b-sq").onclick();
-  if (candidates) renderList(candidates);
-  else if (query) $("#b-sq").onclick();
+  if (candidates?.length && !match) renderList(candidates);
+  else if (query && !match) $("#b-sq").onclick();
+  if (!barcode && !query) $("#sq").focus();
 }
 
 async function addCandidate(c, barcode, el, force = false) {
   const season = parseInt($("#season").value) || null;
   const wish = $("#wish").checked;
+  const keep = $("#keep").checked;
   if (c.type === "tv" && !season && !force && !confirm("Ingen säsong angiven. Lägga till hela serien som en post?")) return;
   const body = { tmdb_id: c.tmdb_id, type: c.type, barcode, format: $("#fmt").value, season,
     location: $("#loc").value.trim() || null, wish, force, library_id: +($("#add-lib")?.value || scanLib()) };
@@ -858,10 +988,17 @@ async function addCandidate(c, barcode, el, force = false) {
     const item = await api("/api/items", { method: "POST", json: body });
     if (barcode) removeFromQueue(barcode);
     state.facets = null;
-    await load();
-    toast(wish ? "★ Lagd på önskelistan" : "Tillagd i samlingen", "ok");
-    stack = [];
-    show(viewItem, item.id);
+    load();
+    toast(`${wish ? "★ Önskad" : "✓ Tillagd"}: <b>${esc(item.title)}</b>`, "ok");
+    if (!keep) { addedThisRound = 0; stack = []; return show(viewItem, item.id); }
+    addedThisRound++;
+    if (barcode) return nextAfterAdd(barcode);
+    // Titelsökning: töm sökningen och stanna kvar med samma format, plats och samling
+    el.style.opacity = 1;
+    $("#results").innerHTML = "";
+    $("#sq").value = ""; $("#season").value = "";
+    stack[stack.length - 1] = [viewAdd, [{}]];
+    viewAdd({});
   } catch (e) {
     el.style.opacity = 1;
     if (e.status === 409) {
@@ -869,6 +1006,91 @@ async function addCandidate(c, barcode, el, force = false) {
       if (confirm(`Finns redan i samlingen:\n${list}\n\nLägga till ändå (t.ex. i ett annat format)?`)) addCandidate(c, barcode, el, true);
     } else alert(e.message);
   }
+}
+
+// ---------- Lägg till många på en gång: klistra in en lista ----------
+
+function viewBulkAdd() {
+  openSheet(`
+    <h2>Lägg till flera</h2>
+    <p class="muted small">En titel per rad. Skriv gärna året efter titeln för säkrare träff, t.ex. <i>Alien 1979</i>.
+      Appen föreslår en träff per rad som du kan byta eller bocka ur innan allt läggs till.</p>
+    <textarea id="bulk-text" rows="8" placeholder="Alien 1979&#10;Den enda vägen&#10;Heat (1995)"></textarea>
+    <button class="btn primary" id="bulk-find">Hitta träffar</button>
+    <div id="bulk-res"></div>`);
+  $("#bulk-text").value = store.get("bulkDraft", "");
+  $("#bulk-text").oninput = (e) => store.set("bulkDraft", e.target.value);
+  $("#bulk-find").onclick = bulkFind;
+}
+
+async function bulkFind() {
+  const lines = [...new Set($("#bulk-text").value.split("\n").map((l) => l.trim()).filter(Boolean))].slice(0, 100);
+  if (!lines.length) return $("#bulk-text").focus();
+  const f = await facets();
+  const last = store.get("lastAdd", { format: "DVD", location: "" });
+  const rows = lines.map((line) => ({ line, list: null, pick: 0 }));
+  $("#bulk-res").innerHTML = `
+    <div class="row">
+      <select id="fmt">${FORMATS(f).map((x) => option(x, x, last.format)).join("")}</select>
+      <input id="loc" type="text" list="b-locs" placeholder="Plats" value="${esc(last.location)}">
+      <datalist id="b-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+    </div>
+    ${state.libs.length > 1 ? `<label class="form-label">Samling</label><select id="add-lib">${libOptions(scanLib())}</select>` : ""}
+    <label class="check"><input type="checkbox" id="wish"> ★ Lägg på önskelistan i stället</label>
+    <div id="bulk-rows"></div>
+    <button class="btn primary big" id="bulk-add" disabled>Söker…</button>`;
+  const draw = () => {
+    $("#bulk-rows").innerHTML = rows.map((r, i) => {
+      if (r.list === null) return `<div class="bulk-row"><div class="poster none thumb"></div><div class="grow"><b>${esc(r.line)}</b><div class="muted small">Söker…</div></div></div>`;
+      if (!r.list.length) return `<div class="bulk-row off"><div class="poster none thumb"></div><div class="grow"><b>${esc(r.line)}</b><div class="bad-text small">Ingen träff – prova annan stavning eller lägg till året</div></div></div>`;
+      const c = r.list[r.pick];
+      return `<div class="bulk-row ${r.skip ? "off" : ""}">
+        <input type="checkbox" data-chk="${i}" ${r.skip ? "" : "checked"}>
+        ${c.poster_path ? `<img class="poster thumb" src="${TMDB_IMG}w92${esc(c.poster_path)}" alt="">` : `<div class="poster none thumb"></div>`}
+        <div class="grow"><div class="muted small">${esc(r.line)}</div>
+          <select data-pick="${i}">${r.list.map((x, j) => option(j, `${x.title}${x.year ? ` (${x.year})` : ""} · ${x.type === "tv" ? "serie" : "film"}`, r.pick)).join("")}</select>
+          ${r.status ? `<div class="small ${r.status.ok ? "ok-text" : "bad-text"}">${esc(r.status.text)}</div>` : ""}</div></div>`;
+    }).join("");
+    $$("[data-chk]").forEach((c) => (c.onchange = () => { rows[c.dataset.chk].skip = !c.checked; draw(); }));
+    $$("[data-pick]").forEach((s) => (s.onchange = () => { rows[s.dataset.pick].pick = +s.value; draw(); }));
+    const n = rows.filter((r) => r.list?.length && !r.skip && !r.status?.ok).length;
+    const done = rows.every((r) => r.list !== null);
+    $("#bulk-add").disabled = !done || !n;
+    $("#bulk-add").textContent = done ? `Lägg till ${n} ${n === 1 ? "titel" : "titlar"}` : "Söker…";
+  };
+  draw();
+  let next = 0;
+  const worker = async () => {
+    while (next < rows.length) {
+      const r = rows[next++];
+      try { r.list = (await api(`/api/search?q=${encodeURIComponent(r.line)}`)).slice(0, 6); } catch { r.list = []; }
+      draw();
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  $("#bulk-add").onclick = async () => {
+    const lib = +($("#add-lib")?.value || scanLib());
+    const fmt = $("#fmt").value, loc = $("#loc").value.trim() || null, wish = $("#wish").checked;
+    store.set("lastAdd", { format: fmt, location: loc || "" });
+    $("#bulk-add").disabled = true;
+    let added = 0;
+    for (const r of rows) {
+      if (!r.list?.length || r.skip || r.status?.ok) continue;
+      const c = r.list[r.pick];
+      try {
+        await api("/api/items", { method: "POST", json: { tmdb_id: c.tmdb_id, type: c.type, format: fmt, location: loc, wish, library_id: lib } });
+        r.status = { ok: true, text: "✓ Tillagd" }; added++;
+      } catch (e) {
+        r.status = { ok: false, text: e.status === 409 ? "Finns redan – hoppades över" : e.message };
+        if (e.status === 409) r.skip = true;
+      }
+      draw();
+    }
+    store.set("bulkDraft", "");
+    state.facets = null; load();
+    toast(`✓ ${added} ${added === 1 ? "titel" : "titlar"} tillagda`, "ok");
+    $("#bulk-add").textContent = "Klart";
+  };
 }
 
 // ---------- Inventering ----------
@@ -1099,11 +1321,13 @@ async function viewMenu() {
     ${s.tmdb ? "" : `<div class="notice bad">TMDB-nyckel saknas – omslag och sökning fungerar inte. <a href="#" id="m-fix">Fyll i under Inställningar</a>.</div>`}
     ${busy}
     ${entry("m-add", "＋", "Lägg till utan streckkod", "Sök på titel")}
+    ${entry("m-bulk", "☰", "Lägg till flera", "Klistra in en lista med titlar")}
     ${entry("m-stats", "📊", "Statistik")}
     ${entry("m-coll", "🎞", "Filmserier", "Se vilka delar du saknar")}
     ${entry("m-loans", "🤝", "Utlånat")}
     ${entry("m-inv", "📋", "Inventering", "Skanna hyllan och se vad som saknas")}
     ${entry("m-missing", "🖼", "Saknar omslag", c.no_poster ? `${c.no_poster} titlar` : "")}
+    ${entry("m-covers", "🗃", "Importera omslag", "Många bilder eller en zip på en gång")}
     ${entry("m-refresh", "⟳", "Uppdatera metadata", "För hela samlingen")}
     ${entry("m-libs", "🗂", "Samlingar", `${state.libs.length} st – skapa, byt namn, ta bort`)}
     ${entry("m-import", "⬆", "Importera från CLZ")}
@@ -1111,7 +1335,7 @@ async function viewMenu() {
     ${entry("m-ha", "🏠", "Home Assistant")}
     ${entry("m-settings", "⚙", "Inställningar", "TMDB, omslag, Plex/Jellyfin, säkerhetskopior")}
     <p class="muted small center-text">Diskoteket ${esc(s.version)} · data i ${esc(s.config_dir)}</p>`);
-  const go = { "m-add": () => show(viewAdd, {}), "m-stats": () => show(viewStats), "m-coll": () => show(viewCollections),
+  const go = { "m-add": () => show(viewAdd, {}), "m-bulk": () => show(viewBulkAdd), "m-covers": () => show(viewCoverImport), "m-stats": () => show(viewStats), "m-coll": () => show(viewCollections),
     "m-loans": () => show(viewLoans), "m-inv": () => show(viewInventory), "m-missing": () => show(viewMissing),
     "m-refresh": () => show(viewRefreshLib), "m-libs": () => show(viewLibManage),
     "m-import": () => show(viewImport), "m-backup": () => show(viewBackups),
@@ -1205,6 +1429,12 @@ async function viewSettings() {
           .map(([v, l]) => option(v, l, s.tmdb_language)).join("")}</select></label>
       <button class="btn small" data-test="tmdb">Testa nyckeln</button> <span class="test-msg" id="t-tmdb"></span>
 
+      <h3>Streckkoder</h3>
+      <label class="check"><input type="checkbox" id="s-lookup_mymovies" ${s.lookup_mymovies === "1" ? "checked" : ""}> Slå upp i MyMovies (nordiska utgåvor)</label>
+      <label class="check"><input type="checkbox" id="s-lookup_upcitemdb" ${s.lookup_upcitemdb === "1" ? "checked" : ""}> Slå upp i UPCitemdb (amerikanska utgåvor, 100/dag)</label>
+      ${secret("ean_db_token", "EAN-DB-nyckel (valfri)", "JWT-nyckel från ean-db.com")}
+      <p class="muted small">EAN-DB ger 250 gratis uppslag efter registrering. Koder du kopplar till en film kommer appen ihåg.</p>
+
       <h3>Omslag</h3>
       <label class="check"><input type="checkbox" id="s-local_posters" ${s.local_posters === "1" ? "checked" : ""}> Spara omslag lokalt i appdata</label>
       <p class="muted small">${st.posters.files} omslag sparade (${st.posters.mb} MB). Lokala omslag gör att appen fungerar även om TMDB ligger nere.</p>
@@ -1288,6 +1518,15 @@ rest_command:
 
 let qTimer;
 $("#q").oninput = (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { state.q = e.target.value.trim(); load(); }, 250); };
+// Sökfältet börjar alltid på "Titel" när sidan öppnas
+const FIELD_HINT = { title: "Sök titel…", actors: "Sök skådespelare…", director: "Sök regissör…", all: "Sök titel, skådespelare, regissör…" };
+$("#q-field").value = "title";
+$("#q-field").onchange = (e) => {
+  state.field = e.target.value;
+  $("#q").placeholder = FIELD_HINT[state.field];
+  $("#q").focus();
+  if (state.q) load();
+};
 $("#tabs").onclick = (e) => {
   if (e.target.tagName !== "BUTTON") return;
   $("#tabs .on").classList.remove("on");

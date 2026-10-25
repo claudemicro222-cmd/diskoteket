@@ -13,10 +13,10 @@ from starlette.responses import FileResponse, JSONResponse, RedirectResponse
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import clz_import, db, enrich, mediaservers, posters, repo, settings, tmdb
+from . import barcodes, clz_import, covers, db, enrich, mediaservers, posters, repo, settings, tmdb
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "3.0"
+VERSION = "3.1"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 
@@ -115,7 +115,8 @@ async def items_list(request):
         lib=lib_of(request), q=p.get("q", ""), kind=p.get("kind", ""), status=p.get("status", "owned"),
         format=p.get("format", ""), genre=p.get("genre", ""), location=p.get("location", ""),
         watched=p.get("watched", ""), digital=p.get("digital", ""), sort=p.get("sort", "title"),
-        missing_poster=qbool(request, "missing_poster"), collection_id=int(coll) if coll.isdigit() else None))
+        missing_poster=qbool(request, "missing_poster"), collection_id=int(coll) if coll.isdigit() else None,
+        field=p.get("field", "title")))
 
 
 async def facets(request):
@@ -184,6 +185,9 @@ async def item_add(request):
     with db.connect() as con:
         item_id, _ = db.upsert(con, item)
         con.execute("UPDATE items SET enriched=1, coll_checked=1 WHERE id=?", (item_id,))
+    if item.get("barcode"):
+        barcodes.learn(item["barcode"], item["tmdb_id"], item["kind"], item.get("series_name") or item["title"],
+                       item.get("year"), item.get("format"))
     if item.get("poster_path"):
         background(posters.fetch(item["poster_path"]))
     return JSONResponse(repo.get(item_id))
@@ -201,6 +205,9 @@ async def item_rematch(request):
         changes["series_name"] = (await tmdb.details(int(b["tmdb_id"]), "tv"))["title"]
     repo.update(item_id, changes, lock=False, unlock={"poster_path", "plot"})
     item = await enrich.refresh_item(item_id)
+    if item and item.get("barcode"):  # rätta även den inlärda streckkoden
+        barcodes.learn(item["barcode"], item["tmdb_id"], item["kind"], item.get("series_name") or item["title"],
+                       item.get("year"), item.get("format"))
     return JSONResponse(item)
 
 
@@ -223,6 +230,40 @@ async def item_posters(request):
     return JSONResponse(await tmdb.posters(it["tmdb_id"], it["kind"], it.get("season")))
 
 
+async def item_cover(request):
+    """Eget omslag: fil/foto (multipart) eller bildadress (JSON {url})."""
+    item_id = request.path_params["item_id"]
+    item_or_404(item_id)
+    try:
+        if request.headers.get("content-type", "").startswith("multipart/"):
+            form = await request.form()
+            upload = form.get("file")
+            if not upload or not hasattr(upload, "read"):
+                raise HTTPException(400, "Ingen bild vald")
+            data = await upload.read()
+        else:
+            data = await covers.download((await body(request)).get("url", "").strip())
+        item = await asyncio.to_thread(covers.save_for_item, item_id, data)
+    except covers.CoverError as e:
+        raise HTTPException(400, str(e))
+    return JSONResponse(item)
+
+
+async def covers_import(request):
+    """Massimport: många bilder eller en zip, namngivna efter streckkod eller titel."""
+    form = await request.form()
+    uploads = []
+    for f in form.getlist("files"):
+        if hasattr(f, "read"):
+            uploads.append((f.filename or "bild", await f.read()))
+    if not uploads:
+        raise HTTPException(400, "Inga filer valda")
+    lib = form.get("lib", "")
+    only_missing = str(form.get("only_missing", "1")) in ("1", "true", "on")
+    result = await asyncio.to_thread(covers.bulk_import, uploads, int(lib) if str(lib).isdigit() else None, only_missing)
+    return JSONResponse(result)
+
+
 # ---------- Streckkod & sök ----------
 
 async def barcode(request):
@@ -231,15 +272,16 @@ async def barcode(request):
     existing = repo.find_existing(lib_of(request), barcode=code)
     if existing or qbool(request, "local"):
         return JSONResponse({"existing": existing})
-    title = await tmdb.barcode_lookup(code)
-    query = tmdb.clean_product_title(title) if title else ""
-    candidates = await tmdb.search(query) if query and tmdb.enabled() else []
-    return JSONResponse({"existing": [], "product_title": title, "query": query, "candidates": candidates})
+    return JSONResponse({"existing": [], **(await barcodes.lookup(code))})
 
 
 async def search(request):
     need_tmdb()
-    return JSONResponse(await tmdb.search(q(request, "q")))
+    query, year = q(request, "q").strip(), q(request, "year")
+    m = re.match(r"^(.*?)[\s,]*\(?((?:19|20)\d{2})\)?$", query)  # "Alien 1979" / "Alien (1979)"
+    if not year and m and m.group(1).strip():
+        query, year = m.group(1).strip(), m.group(2)
+    return JSONResponse(await tmdb.search(query, int(year) if str(year).isdigit() else None))
 
 
 # ---------- Import & metadata ----------
@@ -253,8 +295,25 @@ async def import_clz(request):
     lib = repo.create_library(new_name) if new_name else int(form.get("library_id") or default_lib())
     result = clz_import.import_csv(await upload.read(), lib)
     result["library_id"] = lib
+    cover_urls = result.pop("cover_urls", [])
+    result["cover_urls"] = len(cover_urls)
+    if cover_urls:
+        background(fetch_clz_covers(cover_urls))
     background(enrich.run())
     return JSONResponse(result)
+
+
+async def fetch_clz_covers(pairs):
+    """Bildlänkar från CLZ-exporten (om sådana finns) blir egna omslag."""
+    for item_id, url in pairs:
+        it = repo.get(item_id)
+        if not it or "poster_path" in it["locked"]:
+            continue  # redan ett eget omslag
+        try:
+            data = await covers.download(url)
+            await asyncio.to_thread(covers.save_for_item, item_id, data)
+        except covers.CoverError:
+            pass
 
 
 async def enrich_start(request):
@@ -467,6 +526,8 @@ routes = [
     Route("/api/items/{item_id:int}/rematch", item_rematch, methods=["POST"]),
     Route("/api/items/{item_id:int}/refresh", item_refresh, methods=["POST"]),
     Route("/api/items/{item_id:int}/posters", item_posters),
+    Route("/api/items/{item_id:int}/cover", item_cover, methods=["POST"]),
+    Route("/api/covers/import", covers_import, methods=["POST"]),
     Route("/api/facets", facets),
     Route("/api/barcode/{code}", barcode),
     Route("/api/search", search),

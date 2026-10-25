@@ -16,6 +16,9 @@ DEFS = {
     "jellyfin_url": ("JELLYFIN_URL", "", False),
     "jellyfin_api_key": ("JELLYFIN_API_KEY", "", True),
     "digital_sync_hours": ("DIGITAL_SYNC_HOURS", "6", False),
+    "lookup_mymovies": ("LOOKUP_MYMOVIES", "1", False),
+    "lookup_upcitemdb": ("LOOKUP_UPCITEMDB", "1", False),
+    "ean_db_token": ("EAN_DB_TOKEN", "", True),
 }
 
 _cache: dict | None = None

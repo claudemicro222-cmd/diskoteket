@@ -1,0 +1,6 @@
+# Bygg från källkoden i stället för att hämta färdig avbild:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+services:
+  diskoteket:
+    build: .
+    image: diskoteket:dev
