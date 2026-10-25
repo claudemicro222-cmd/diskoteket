@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#14161a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/static/icon.svg">
+  <link rel="apple-touch-icon" href="/static/icon.svg">
+  <title>Diskoteket</title>
+  <script>
+    // Tema direkt, innan sidan ritas, så att den inte blinkar vitt/svart
+    try { const t = JSON.parse(localStorage.getItem("theme")); if (t && t !== "auto") document.documentElement.dataset.theme = t; } catch (e) {}
+  </script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <div class="top">
+      <div class="brand"><img src="/static/icon.svg" alt=""><h1>Diskoteket</h1></div>
+      <button id="btn-lib" class="lib-btn" aria-label="Byt samling"><span id="lib-name">…</span> ▾</button>
+      <button id="btn-random" class="icon" aria-label="Slumpa en film" title="Slumpa en film">🎲</button>
+      <button id="btn-view" class="icon" aria-label="Visning och tema" title="Visning och tema">
+        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M3 3h8v8H3zm10 0h8v8h-8zM3 13h8v8H3zm10 0h8v8h-8z" opacity=".9"/></svg></button>
+      <button id="btn-menu" class="icon" aria-label="Meny">☰</button>
+    </div>
+    <div class="row tight">
+      <input id="q" type="search" placeholder="Sök titel, skådespelare, streckkod…" autocomplete="off">
+      <button id="btn-filter" class="btn filter-btn">Filter</button>
+    </div>
+    <nav id="tabs">
+      <button data-tab="all" class="on">Alla</button>
+      <button data-tab="movie">Filmer</button>
+      <button data-tab="tv">Serier</button>
+      <button data-tab="wish">Önskelista</button>
+    </nav>
+    <div id="active-filters"></div>
+    <div id="count" class="muted small"></div>
+  </header>
+
+  <main id="grid"></main>
+  <p id="empty" class="muted center" hidden></p>
+
+  <button id="btn-scan" class="fab" aria-label="Skanna streckkod" title="Skanna streckkod">
+    <svg viewBox="0 0 24 24" width="28" height="28" aria-hidden="true"><path fill="currentColor" d="M9.4 4 8 6H5a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-3l-1.4-2zM12 8.5a4.5 4.5 0 1 1 0 9 4.5 4.5 0 0 1 0-9m0 2a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5"/></svg>
+  </button>
+  <div id="toast" hidden></div>
+
+  <!-- Bottenark som återanvänds för alla vyer -->
+  <div id="sheet-bg" hidden></div>
+  <section id="sheet" hidden>
+    <button class="icon back" id="sheet-back" aria-label="Tillbaka" hidden>‹</button>
+    <button class="icon close" id="sheet-close" aria-label="Stäng">✕</button>
+    <div id="sheet-body"></div>
+  </section>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

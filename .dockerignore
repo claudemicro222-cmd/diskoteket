@@ -1,0 +1,5 @@
+data
+appdata
+.env
+**/__pycache__
+*.zip

@@ -1,0 +1,18 @@
+# För test i VM:en (Docker Desktop). På Unraid används mallen i mappen unraid/ i stället.
+services:
+  diskoteket:
+    build: .
+    image: diskoteket:latest
+    container_name: diskoteket
+    ports:
+      - "8080:8080"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Europe/Stockholm
+    env_file:
+      - path: .env        # valfri – gamla inställningar från version 1–2 läses in som startvärden
+        required: false
+    volumes:
+      - ./data:/config    # här hamnar databas, omslag, säkerhetskopior och inställningar
+    restart: unless-stopped

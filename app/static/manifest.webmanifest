@@ -1,0 +1,10 @@
+{
+  "name": "Diskoteket",
+  "short_name": "Diskoteket",
+  "description": "Din egen film- och seriesamling",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#14161a",
+  "theme_color": "#14161a",
+  "icons": [{ "src": "/static/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}

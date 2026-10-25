@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>Diskoteket</Name>
+  <Repository>diskoteket:latest</Repository>
+  <Registry/>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support/>
+  <Project/>
+  <Overview>Egen film- och seriesamling. Mobilanpassad webbsida med streckkodsskanning, import från CLZ, omslag från TMDB, flera samlingar, utlåning, statistik och koppling till Plex/Jellyfin och Home Assistant. Allt sparas i appdata.</Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon/>
+  <ExtraParams>--restart unless-stopped</ExtraParams>
+  <PostArgs/>
+  <CPUset/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>Bygg först avbilden med unraid/install.sh (se README).</Requires>
+  <Config Name="Webbsida (port)" Target="8080" Default="8080" Mode="tcp" Description="Porten du når Diskoteket på, t.ex. http://tower:8080" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Appdata" Target="/config" Default="/mnt/user/appdata/diskoteket" Mode="rw" Description="Databas, omslag, säkerhetskopior och inställningar" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/diskoteket</Config>
+  <Config Name="PUID" Target="PUID" Default="99" Mode="" Description="Användar-ID (Unraid: 99 = nobody)" Type="Variable" Display="advanced" Required="true" Mask="false">99</Config>
+  <Config Name="PGID" Target="PGID" Default="100" Mode="" Description="Grupp-ID (Unraid: 100 = users)" Type="Variable" Display="advanced" Required="true" Mask="false">100</Config>
+  <Config Name="UMASK" Target="UMASK" Default="002" Mode="" Description="Filrättigheter för nya filer" Type="Variable" Display="advanced" Required="false" Mask="false">002</Config>
+</Container>

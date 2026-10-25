@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <radialGradient id="g" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#ffe08a"/><stop offset=".55" stop-color="#f5b301"/><stop offset="1" stop-color="#b47f00"/></radialGradient>
+    <linearGradient id="s" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".55"/><stop offset=".5" stop-color="#fff" stop-opacity="0"/></linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="#16181d"/>
+  <circle cx="256" cy="266" r="178" fill="url(#g)"/>
+  <path d="M256 88a178 178 0 0 1 154 89L256 266z" fill="url(#s)"/>
+  <circle cx="256" cy="266" r="120" fill="none" stroke="#16181d" stroke-opacity=".18" stroke-width="6"/>
+  <circle cx="256" cy="266" r="80" fill="none" stroke="#16181d" stroke-opacity=".14" stroke-width="5"/>
+  <circle cx="256" cy="266" r="44" fill="#16181d"/>
+  <circle cx="256" cy="266" r="16" fill="#f5b301"/>
+  <path d="M404 64l10 26 26 10-26 10-10 26-10-26-26-10 26-10z" fill="#fff"/>
+  <path d="M448 150l5 13 13 5-13 5-5 13-5-13-13-5 13-5z" fill="#fff" opacity=".8"/>
+</svg>
