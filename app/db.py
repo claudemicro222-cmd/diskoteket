@@ -22,7 +22,12 @@ FIELDS = [
     "collection_id", "collection_name",
     # Musik (kind='music'). Speltid sparas i runtime (minuter), antal skivor i nr_discs.
     "artist", "label", "cat_no", "tracks", "tracklist", "mbid", "discogs_id",
+    # 4.1: egna taggar, uppgraderingsönskan, skick, försäljning, prisbevakning, släppdatum på skiva
+    "tags", "upgrade_to", "condition", "condition_notes", "sell_price", "wish_price", "release_physical",
 ]
+
+CONDITIONS = ("Nyskick", "Mycket bra", "Bra", "Okej", "Dålig")
+FOR_SALE = "For Sale"  # collection_status: ägd men till salu
 
 KINDS = ("movie", "tv", "music")
 VARIOUS = ("various", "various artists", "va", "blandade artister")  # samlingsskivor
@@ -49,7 +54,14 @@ CREATE TABLE {name} (
     artist TEXT, label TEXT, cat_no TEXT, tracks INTEGER,
     tracklist TEXT,         -- JSON-lista med skiva, nummer, titel och längd per spår
     mbid TEXT,              -- MusicBrainz release-ID
-    discogs_id INTEGER
+    discogs_id INTEGER,
+    tags TEXT,              -- egna taggar, ' | ' emellan som genrer
+    upgrade_to TEXT,        -- vill ha den i ett bättre format, t.ex. '4K UHD'
+    condition TEXT, condition_notes TEXT,
+    sell_price REAL,        -- begärt pris när titeln är till salu
+    wish_price REAL,        -- köp om den kostar högst så här mycket (önskelistan)
+    release_physical TEXT,  -- första släppdatum på skiva enligt TMDB (önskelistan)
+    release_checked TEXT
 )"""
 
 OTHER_TABLES = """
@@ -69,6 +81,31 @@ CREATE TABLE IF NOT EXISTS digital (
     kind TEXT,                  -- 'movie' eller 'tv' (TMDB-ID kan krocka mellan filmer och serier)
     imdb_id TEXT, tmdb_id INTEGER, title TEXT, year INTEGER
 );
+CREATE TABLE IF NOT EXISTS trash (         -- papperskorgen: hela posten som JSON, sparas i 30 dagar
+    id INTEGER PRIMARY KEY,                -- samma id som posten hade
+    item TEXT NOT NULL,
+    deleted TEXT DEFAULT (datetime('now', 'localtime'))
+);
+CREATE TABLE IF NOT EXISTS views (         -- tittarhistorik
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL,
+    date TEXT NOT NULL,
+    source TEXT                            -- 'du', 'letterboxd' eller 'trakt'
+);
+CREATE TABLE IF NOT EXISTS locations (     -- hyllkartan: plats -> beskrivning och foto
+    name TEXT PRIMARY KEY,
+    description TEXT,
+    photo TEXT
+);
+CREATE TABLE IF NOT EXISTS loan_requests ( -- "be om att låna" från vänsidan
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    item_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    message TEXT,
+    created TEXT DEFAULT (datetime('now', 'localtime')),
+    handled INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_views_item ON views(item_id);
 CREATE INDEX IF NOT EXISTS idx_items_barcode ON items(barcode);
 CREATE INDEX IF NOT EXISTS idx_items_imdb ON items(imdb_id);
 CREATE INDEX IF NOT EXISTS idx_items_tmdb ON items(tmdb_id);

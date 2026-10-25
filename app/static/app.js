@@ -13,13 +13,15 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* privat läge */ } },
 };
 
-const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", watched: "", digital: "", loaned: false };
+const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", watched: "", digital: "", loaned: false, tag: "" };
 let state = {
   tab: "all", q: "", field: "title", items: [], facets: null, libs: [],
   lib: store.get("lib", null),               // samlingens id, eller "all"
   view: store.get("view", "grid-m"),          // grid-s, grid-m, grid-l, list, compact
   theme: store.get("theme", "auto"),          // auto, light, dark
   ...DEFAULT_FILTERS, ...store.get("filters", {}),
+  wishMode: "wish",                           // önskelistan: "wish" eller "upgrade"
+  selecting: false, selected: new Set(),      // välj flera för massredigering
 };
 delete state.location; // platsfiltret är borttaget – rensa ev. gammalt sparat värde
 
@@ -28,7 +30,10 @@ async function api(path, opts = {}) {
     opts.body = JSON.stringify(opts.json);
     opts.headers = { "Content-Type": "application/json" };
   }
-  const r = await fetch(path, opts);
+  let r;
+  try { r = await fetch(path, opts); }
+  catch (e) { $("#offline").hidden = false; throw new Error("Servern svarar inte – du är offline"); }
+  if (!opts.method || opts.method === "GET") $("#offline").hidden = r.headers.get("X-Diskoteket-Offline") !== "1";
   const data = await r.json().catch(() => ({}));
   if (r.status === 401 && data.login) location.reload(); // utloggad – sidan visar inloggningen
   if (!r.ok) {
@@ -106,7 +111,7 @@ function toast(msg, kind = "") {
   t.className = kind;
   t.hidden = false;
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => (t.hidden = true), 2600);
+  toastTimer = setTimeout(() => (t.hidden = true), msg.includes("<a ") ? 6000 : 2600);
 }
 
 // Pip-ljud vid skanning: högt dubbelpip = finns redan, lågt = ny
@@ -254,8 +259,9 @@ function query() {
   const p = { q: state.q, field: music && state.field !== "title" ? "all" : state.field,
     sort: !music && state.sort === "artist" ? "title" : state.sort, format: state.format, genre: state.genre,
     watched: music ? "" : state.watched, digital: music ? "" : state.digital };
-  p.status = state.tab === "wish" ? "wish" : state.loaned ? "loaned" : "owned";
+  p.status = state.tab === "wish" ? (state.wishMode === "upgrade" ? "upgrade" : "wish") : state.loaned ? "loaned" : "owned";
   if (tabKind()) p.kind = tabKind();
+  if (state.tag) p.tag = state.tag;
   p.lib = state.lib === "all" ? "all" : state.lib;
   return new URLSearchParams(p);
 }
@@ -285,23 +291,139 @@ function render() {
   const grid = $("#grid");
   grid.className = state.view + (musicTab() ? " music-grid" : "");
   const list = state.view === "list" || state.view === "compact";
+  state.cards = cards;
   grid.innerHTML = cards.map((c, i) => (list ? rowHtml(c, i) : cardHtml(c, i))).join("");
   $$("#grid [data-i]").forEach((el) => {
     const c = cards[el.dataset.i];
-    el.onclick = () => (c.group ? show(viewSeries, c) : show(viewItem, c.id));
+    el.onclick = () => (state.selecting ? toggleSelect(c, el) : c.group ? show(viewSeries, c) : show(viewItem, c.id));
+    if (state.selecting && cardIds(c).every((id) => state.selected.has(id))) el.classList.add("sel");
   });
   const n = state.items.length;
-  const word = musicTab() ? (n === 1 ? "album" : "album") : n === 1 ? "titel" : "titlar";
-  $("#count").textContent = `${n} ${word}${cards.length !== n ? ` · ${cards.length} kort` : ""}`;
+  const word = musicTab() ? "album" : n === 1 ? "titel" : "titlar";
+  $("#count").innerHTML = `<span>${n} ${word}${cards.length !== n ? ` · ${cards.length} kort` : ""}</span>
+    ${state.tab === "wish" ? `<span class="seg-switch mini" id="wish-mode">
+      <button data-m="wish" class="${state.wishMode !== "upgrade" ? "on" : ""}">★ Önskat</button>
+      <button data-m="upgrade" class="${state.wishMode === "upgrade" ? "on" : ""}">⬆ Uppgradera</button></span>` : ""}
+    <button class="btn small" id="btn-select">${state.selecting ? "Klar" : "Välj"}</button>`;
+  $("#btn-select").onclick = () => (state.selecting ? stopSelect() : startSelect());
+  $$("#wish-mode button").forEach((b) => (b.onclick = () => { state.wishMode = b.dataset.m; load(); }));
   const empty = $("#empty");
   empty.hidden = n > 0;
   empty.textContent = state.tab === "wish"
-    ? "Önskelistan är tom. Skanna eller sök en titel och välj ”Önskelista”."
+    ? (state.wishMode === "upgrade" ? "Inget att uppgradera. Öppna en titel → Redigera → ”Vill uppgradera till”."
+      : "Önskelistan är tom. Skanna eller sök en titel och välj ”Önskelista”.")
     : activeFilterCount() || state.q ? "Inget matchade. Prova att ändra filtren."
     : musicTab() ? "Ingen musik än. Öppna menyn och importera en export från CLZ Music, eller skanna din första skiva."
     : "Samlingen är tom. Öppna menyn och importera en CLZ-export, eller skanna din första film.";
   renderShelf();
   renderActiveFilters();
+  renderAZ(cards);
+  renderSelectBar();
+}
+
+// ---------- Bokstavslisten till höger (som i Radarr) ----------
+
+const AZ = [..."#ABCDEFGHIJKLMNOPQRSTUVWXYZÅÄÖ"];
+const sortKey = (c) => (c.group ? c.name : state.sort === "artist" && isMusic(c) ? artistName(c.artist) || c.title
+  : c.series_name || c.sort_title || c.title) || "";
+function letterOf(text) {
+  const ch = text.trim().charAt(0).toUpperCase();
+  if ("ÅÄÖ".includes(ch)) return ch;
+  const plain = ch.normalize("NFD").replace(/[̀-ͯ]/g, ""); // É -> E, Ü -> U
+  return /[A-Z]/.test(plain) ? plain : "#";
+}
+
+let azAnchors = [];
+function renderAZ(cards) {
+  const bar = $("#az");
+  const alphabetical = ["title", "artist"].includes(state.sort) && !state.q && cards.length > 30;
+  if (!alphabetical) { bar.hidden = true; azAnchors = []; return; }
+  const els = $$("#grid [data-i]");
+  const first = {};
+  cards.forEach((c, i) => { const l = letterOf(sortKey(c)); if (!(l in first)) first[l] = els[i]; });
+  azAnchors = AZ.filter((l) => first[l]).map((l) => ({ letter: l, el: first[l] }));
+  bar.innerHTML = AZ.map((l) => `<span data-l="${l}" class="${first[l] ? "" : "off"}">${l}</span>`).join("");
+  bar.hidden = false;
+  updateAZ();
+}
+
+function currentLetter() {
+  const line = $("header").getBoundingClientRect().bottom + 12;
+  let cur = azAnchors[0]?.letter;
+  for (const a of azAnchors) {
+    if (a.el.getBoundingClientRect().top <= line) cur = a.letter; else break;
+  }
+  return cur;
+}
+
+let azBubbleTimer;
+function updateAZ(showBubble = false) {
+  if ($("#az").hidden) return;
+  const cur = currentLetter();
+  $$("#az span").forEach((s) => s.classList.toggle("on", s.dataset.l === cur));
+  const bubble = $("#az-bubble");
+  if (showBubble && cur) {
+    bubble.textContent = cur;
+    bubble.hidden = false;
+    clearTimeout(azBubbleTimer);
+    azBubbleTimer = setTimeout(() => (bubble.hidden = true), 700);
+  }
+}
+
+function jumpTo(letter) {
+  // närmaste bokstav som finns, framåt i alfabetet (sedan bakåt)
+  const idx = AZ.indexOf(letter);
+  const target = azAnchors.find((a) => AZ.indexOf(a.letter) >= idx) || azAnchors.at(-1);
+  if (!target) return;
+  const y = target.el.getBoundingClientRect().top + scrollY - $("header").getBoundingClientRect().bottom - 8;
+  scrollTo({ top: Math.max(0, y) });
+  updateAZ(true);
+}
+
+(function azEvents() {
+  const bar = $("#az");
+  const letterAt = (e) => {
+    const r = bar.getBoundingClientRect();
+    const i = Math.floor(((e.clientY - r.top) / r.height) * AZ.length);
+    return AZ[Math.max(0, Math.min(AZ.length - 1, i))];
+  };
+  let dragging = false;
+  bar.addEventListener("pointerdown", (e) => { dragging = true; bar.setPointerCapture(e.pointerId); jumpTo(letterAt(e)); e.preventDefault(); });
+  bar.addEventListener("pointermove", (e) => dragging && jumpTo(letterAt(e)));
+  bar.addEventListener("pointerup", () => (dragging = false));
+  bar.addEventListener("pointercancel", () => (dragging = false));
+  let ticking = false;
+  addEventListener("scroll", () => {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(() => { ticking = false; updateAZ(true); });
+  }, { passive: true });
+})();
+
+// ---------- Välj flera (massredigering) ----------
+
+const cardIds = (c) => (c.group ? c.seasons.map((s) => s.id) : [c.id]);
+function startSelect() { state.selecting = true; state.selected = new Set(); render(); }
+function stopSelect() { state.selecting = false; state.selected = new Set(); render(); }
+function toggleSelect(c, el) {
+  const ids = cardIds(c);
+  const on = !ids.every((id) => state.selected.has(id));
+  ids.forEach((id) => (on ? state.selected.add(id) : state.selected.delete(id)));
+  el.classList.toggle("sel", on);
+  renderSelectBar();
+}
+function renderSelectBar() {
+  const bar = $("#select-bar");
+  bar.hidden = !state.selecting;
+  if (!state.selecting) return;
+  const n = state.selected.size;
+  bar.innerHTML = `<b>${n} ${n === 1 ? "vald" : "valda"}</b>
+    <button class="btn small" id="sel-all">Markera alla</button>
+    <button class="btn small primary" id="sel-edit" ${n ? "" : "disabled"}>Ändra…</button>
+    <button class="btn small" id="sel-cancel">Avbryt</button>`;
+  $("#sel-all").onclick = () => { state.items.forEach((i) => state.selected.add(i.id)); render(); };
+  $("#sel-edit").onclick = () => show(viewBulkEdit);
+  $("#sel-cancel").onclick = stopSelect;
 }
 
 // "Nyligen tillagt" överst, som en hylla i en streamingtjänst. Bara när man bläddrar fritt.
@@ -326,6 +448,17 @@ function seasonFormats(seasons) {
   return f.length === 1 ? seasons.find((s) => s.format).format : "";
 }
 
+// Märke i hörnet: släppdatum på önskelistan, uppgradering eller till salu
+function statusBadge(c) {
+  if (isWish(c) && c.release_physical) {
+    return c.release_physical <= today() ? `<span class="badge tr ok">Ute på skiva</span>`
+      : `<span class="badge tr">Släpps ${esc(c.release_physical.slice(5).replace("-", "/"))}</span>`;
+  }
+  if (state.tab === "wish" && c.upgrade_to) return `<span class="badge tr">⬆ ${esc(c.upgrade_to)}</span>`;
+  if (c.collection_status === "For Sale") return `<span class="badge tr sale">Till salu</span>`;
+  return "";
+}
+
 function cardHtml(c, i) {
   if (c.group) {
     const first = c.seasons.find((s) => s.poster_path) || c.seasons[0];
@@ -344,7 +477,7 @@ function cardHtml(c, i) {
       <div class="t">${esc(c.title)}</div><div class="s">${esc(artistName(c.artist))}${c.year ? ` · ${c.year}` : ""}</div></div>`;
   }
   return `<div class="card" ${di}><div class="pw ${c.watched ? "seen" : ""}">${poster(c.poster_path, c.title)}
-    ${c.loaned_to ? `<span class="badge tr warn">Utlånad</span>` : ""}
+    ${c.loaned_to ? `<span class="badge tr warn">Utlånad</span>` : statusBadge(c)}
     ${c.digital ? `<span class="badge tl dig">▶</span>` : ""}
     <span class="fmt-wrap">${fmtBadge(c.format)}</span></div>
     <div class="t">${esc(c.title)}</div><div class="s">${c.year || ""}</div></div>`;
@@ -370,7 +503,7 @@ function rowHtml(c, i) {
     <div class="row-flags">${fmt}${flags}</div></div></div>`;
 }
 
-const filterKeys = () => (musicTab() ? ["format", "genre"] : ["format", "genre", "watched", "digital"]);
+const filterKeys = () => (musicTab() ? ["format", "genre", "tag"] : ["format", "genre", "watched", "digital", "tag"]);
 function activeFilterCount() {
   return filterKeys().filter((k) => state[k]).length + (state.loaned ? 1 : 0);
 }
@@ -379,6 +512,7 @@ function renderActiveFilters() {
   const labels = [];
   if (state.format) labels.push(["format", state.format]);
   if (state.genre) labels.push(["genre", state.genre]);
+  if (state.tag) labels.push(["tag", `🏷 ${state.tag}`]);
   if (state.watched && !musicTab()) labels.push(["watched", state.watched === "1" ? "Sedda" : "Osedda"]);
   if (state.digital && !musicTab()) labels.push(["digital", state.digital === "yes" ? "Finns digitalt" : "Bara fysiskt"]);
   if (state.loaned) labels.push(["loaned", "Utlånade"]);
@@ -395,8 +529,16 @@ function renderActiveFilters() {
 }
 
 function saveFilters() {
-  const { sort, format, genre, watched, digital, loaned } = state;
-  store.set("filters", { sort, format, genre, watched, digital, loaned });
+  const { sort, format, genre, watched, digital, loaned, tag } = state;
+  store.set("filters", { sort, format, genre, watched, digital, loaned, tag });
+}
+
+// Tryck på en tagg i en detaljvy: visa alla med den taggen
+function filterByTag(tag) {
+  state.tag = tag;
+  saveFilters();
+  closeSheet();
+  load();
 }
 
 async function facets(fresh = false, kind = musicTab() ? "music" : "video") {
@@ -465,6 +607,7 @@ async function viewFilter() {
       ${sel("f-genre", "Genre", [["", "Alla genrer"], ...f.genres.map((x) => [x, x])], state.genre)}
       ${music ? "" : sel("f-watched", "Sedd", [["", "Alla"], ["0", "Osedda"], ["1", "Sedda"]], state.watched)}
       ${f.digital && !music ? sel("f-digital", "Plex/Jellyfin", [["", "Alla"], ["yes", "Finns digitalt"], ["no", "Bara fysiskt"]], state.digital) : ""}
+      ${f.tags?.length || state.tag ? sel("f-tag", "Tagg", [["", "Alla taggar"], ...[...new Set([...(f.tags || []), state.tag].filter(Boolean))].map((x) => [x, x])], state.tag) : ""}
       <label class="check"><input type="checkbox" id="f-loaned" ${state.loaned ? "checked" : ""}> Visa bara utlånade</label>
     </div>
     <button class="btn primary" id="f-apply">Visa</button>
@@ -472,6 +615,7 @@ async function viewFilter() {
   $("#f-apply").onclick = () => {
     state.sort = $("#f-sort").value; state.format = $("#f-format").value; state.genre = $("#f-genre").value;
     if (!music) { state.watched = $("#f-watched").value; state.digital = $("#f-digital")?.value || ""; }
+    state.tag = $("#f-tag")?.value || "";
     state.loaned = $("#f-loaned").checked;
     saveFilters(); closeSheet(); load();
   };
@@ -480,15 +624,164 @@ async function viewFilter() {
 
 // ---------- Detaljvy ----------
 
-function viewSeries(group) {
+async function viewSeries(group) {
   const seasons = state.items.filter((i) => i.series_name === group.name && (state.lib !== "all" || i.library_id === group.library_id));
   openSheet(`<h2>${esc(group.name)}</h2>` + seasons.map((s) => `
     <div class="list-item" data-id="${s.id}">${poster(s.poster_path, "", "thumb")}
       <div class="grow"><div class="li-title">${s.season ? `Säsong ${s.season}` : esc(s.title)}</div>
       <div class="muted small li-sub">${s.year || ""} ${fmtBadge(s.format, "sm")} ${s.loaned_to ? `· utlånad till ${esc(s.loaned_to)}` : ""}</div></div>
-      ${s.watched ? `<span class="ok-text">✓</span>` : ""}</div>`).join(""));
+      ${s.watched ? `<span class="ok-text">✓</span>` : ""}</div>`).join("") + `<div id="missing-seasons"></div>`);
   bindOpen();
+  // Saknade säsonger: jämför med vad som finns på TMDB
+  const tv = seasons.find((s) => s.tmdb_id)?.tmdb_id;
+  if (!tv) return;
+  const box = $("#missing-seasons");
+  box.innerHTML = `<p class="muted small">Kollar vilka säsonger som finns…</p>`;
+  try {
+    const r = await api(`/api/series/${tv}/seasons?lib=${group.library_id}`);
+    const missing = r.seasons.filter((x) => !x.owned.length);
+    if (!box.isConnected) return;
+    if (r.whole_series.length) { box.innerHTML = `<p class="muted small">Du har hela serien i en box.</p>`; return; }
+    box.innerHTML = !missing.length ? `<div class="notice ok">Du har alla ${r.seasons.length} säsonger. 🎉</div>`
+      : `<h3>Saknade säsonger (${missing.length} av ${r.seasons.length})</h3>` + missing.map((x) => `
+        <div class="list-item">${x.poster_path ? `<img class="poster thumb" loading="lazy" src="${TMDB_IMG}w92${esc(x.poster_path)}" alt="">` : `<div class="poster none thumb"></div>`}
+          <div class="grow"><div class="li-title">Säsong ${x.season}</div>
+          <div class="muted small">${x.year || ""}${x.episodes ? ` · ${x.episodes} avsnitt` : ""}${x.aired ? "" : " · inte sänd än"}</div></div>
+          ${x.wished ? `<span class="star-text">★</span>` : `<button class="btn small" data-season="${x.season}">★ Önska</button>`}</div>`).join("");
+    $$("[data-season]", box).forEach((b) => (b.onclick = async () => {
+      b.disabled = true;
+      await api("/api/items", { method: "POST", json: { tmdb_id: tv, type: "tv", season: +b.dataset.season, wish: true,
+        force: true, format: null, library_id: group.library_id } });
+      b.outerHTML = `<span class="star-text">★</span>`;
+      toast(`★ Säsong ${b.dataset.season} på önskelistan`); load();
+    }));
+  } catch (e) { box.innerHTML = `<p class="muted small">${esc(e.message)}</p>`; }
 }
+
+// Status som visas överst i detaljvyn: önskad (släppdatum, prisbevakning), uppgradering, till salu
+function statusNotices(it) {
+  const out = [];
+  if (isWish(it)) {
+    const rel = it.release_physical;
+    const relText = rel ? (rel <= today() ? ` · <b>finns på skiva</b> sedan ${esc(rel)}` : ` · släpps på skiva <b>${esc(rel)}</b>`) : "";
+    const q = encodeURIComponent(`${it.kind === "music" ? (artistName(it.artist) + " ") : ""}${it.series_name || it.title}`);
+    out.push(`<div class="notice star">★ På önskelistan${relText}${it.wish_price ? ` · köp om högst <b>${kronor(it.wish_price)}</b>` : ""}
+      <div class="price-links"><a class="btn small web" href="https://www.prisjakt.nu/search?search=${q}" target="_blank" rel="noopener">Prisjakt ↗</a>
+      <a class="btn small web" href="https://cdon.se/search?q=${q}" target="_blank" rel="noopener">CDON ↗</a>
+      <a class="btn small web" href="https://www.tradera.com/search?q=${q}" target="_blank" rel="noopener">Tradera ↗</a></div></div>`);
+  }
+  if (it.upgrade_to) out.push(`<div class="notice">⬆ Vill uppgradera till <b>${esc(it.upgrade_to)}</b></div>`);
+  if (it.collection_status === "For Sale") out.push(`<div class="notice warn">🏷 Till salu${it.sell_price ? ` för <b>${kronor(it.sell_price)}</b>` : ""}</div>`);
+  return out.join("");
+}
+
+const tagChips = (it) => (it.tags ? `<div class="tag-row">${it.tags.split(" | ").map((t) => `<button class="chip tag" data-tag="${esc(t)}">🏷 ${esc(t)}</button>`).join("")}</div>` : "");
+const conditionFact = (it) => (it.condition || it.condition_notes
+  ? `<div><b>Skick:</b> ${esc([it.condition, it.condition_notes].filter(Boolean).join(" – "))}</div>` : "");
+const placeLink = (it) => (it.location ? `<div><b>Plats:</b> <a href="#" class="place-link">${esc(it.location)}</a></div>` : "");
+
+function bindCommon(it) {
+  $$("#sheet-body [data-tag]").forEach((b) => (b.onclick = () => filterByTag(b.dataset.tag)));
+  $$("#sheet-body .place-link").forEach((a) => (a.onclick = (e) => { e.preventDefault(); show(viewPlace, it.location); }));
+}
+
+// Visningar: "Sedd 3 gånger · senast …" med egen historikvy
+async function loadViews(it) {
+  const el = $("#views-line");
+  if (!el) return;
+  const views = await api(`/api/items/${it.id}/views`).catch(() => []);
+  if (!el.isConnected) return;
+  el.innerHTML = views.length ? `👁 Sedd ${views.length} ${views.length === 1 ? "gång" : "gånger"} · senast ${esc(views[0].date)}
+    <a href="#" id="views-open">historik</a>` : it.watched ? `👁 Sedd (inget datum) <a href="#" id="views-open">lägg till datum</a>` : "";
+  $("#views-open") && ($("#views-open").onclick = (e) => { e.preventDefault(); show(viewHistory, it); });
+}
+
+async function viewHistory(it) {
+  const views = await api(`/api/items/${it.id}/views`);
+  openSheet(`<h2>Tittarhistorik</h2><p class="muted">${esc(it.title)}</p>
+    <div class="row"><input id="h-date" type="date" value="${today()}"><button class="btn primary" id="h-add">Lägg till visning</button></div>
+    ${views.map((v) => `<div class="list-item"><div class="grow">${esc(v.date)}<div class="muted small">${esc({ du: "Markerad i appen", letterboxd: "Från Letterboxd", trakt: "Från Trakt" }[v.source] || v.source || "")}</div></div>
+      <button class="icon x" data-del="${v.id}" aria-label="Ta bort">✕</button></div>`).join("") || `<p class="muted">Inga visningar sparade än.</p>`}`);
+  $("#h-add").onclick = async () => { await api(`/api/items/${it.id}/views`, { method: "POST", json: { date: $("#h-date").value } }); refresh(); load(); };
+  $$("[data-del]").forEach((b) => (b.onclick = async () => { await api(`/api/views/${b.dataset.del}`, { method: "DELETE" }); refresh(); load(); }));
+}
+
+// Var kan man streama den, och liknande filmer – hämtas efter att sidan visats
+async function loadExtras(it) {
+  if (!it.tmdb_id || isMusic(it)) return;
+  const prov = $("#providers"), sim = $("#similar");
+  api(`/api/items/${it.id}/providers`).then((p) => {
+    if (!prov.isConnected) return;
+    const logos = (list) => list.map((x) => `<span class="provider" title="${esc(x.name)}">${x.logo ? `<img src="${TMDB_IMG}w92${esc(x.logo)}" alt="${esc(x.name)}" loading="lazy">` : esc(x.name)}</span>`).join("");
+    const parts = [p.stream.length && `<div><span class="muted small">Streama</span><div class="providers">${logos(p.stream)}</div></div>`,
+      p.rent.length && `<div><span class="muted small">Hyr</span><div class="providers">${logos(p.rent.slice(0, 8))}</div></div>`,
+      p.buy.length && `<div><span class="muted small">Köp digitalt</span><div class="providers">${logos(p.buy.slice(0, 8))}</div></div>`].filter(Boolean);
+    prov.innerHTML = parts.length ? `<h3>Var kan jag se den?</h3>${parts.join("")}
+      <p class="muted small">I Sverige, enligt JustWatch${p.link ? ` · <a href="${esc(p.link)}" target="_blank" rel="noopener">mer ↗</a>` : ""}</p>`
+      : `<h3>Var kan jag se den?</h3><p class="muted small">Finns inte att streama i Sverige just nu (enligt JustWatch).</p>`;
+  }).catch(() => (prov.innerHTML = ""));
+  api(`/api/items/${it.id}/similar?${libParam()}`).then((r) => {
+    if (!sim.isConnected || (!r.mine.length && !r.other.length)) return;
+    const card = (c, i, from) => `<div class="card mini" data-from="${from}" data-i="${i}"><div class="pw">${c.poster_path
+      ? `<img class="poster" loading="lazy" src="${TMDB_IMG}w185${esc(c.poster_path)}" alt="">` : `<div class="poster none"><span>${esc(c.title)}</span></div>`}
+      ${c.owned.length ? `<span class="badge tr">✓</span>` : c.wished ? `<span class="badge tr">★</span>` : ""}</div>
+      <div class="t">${esc(c.title)}</div><div class="s">${c.year || ""}</div></div>`;
+    sim.innerHTML = `${r.mine.length ? `<h3>Liknande i din samling</h3><div class="shelf-row in-sheet">${r.mine.slice(0, 12).map((c, i) => card(c, i, "mine")).join("")}</div>` : ""}
+      ${r.other.length ? `<h3>Liknande att skaffa</h3><div class="shelf-row in-sheet">${r.other.slice(0, 14).map((c, i) => card(c, i, "other")).join("")}</div>` : ""}`;
+    $$(".card.mini", sim).forEach((el) => (el.onclick = () => {
+      const c = r[el.dataset.from][el.dataset.i];
+      if (c.owned.length) show(viewItem, c.owned[0].id); else show(viewTmdbTitle, c);
+    }));
+  }).catch(() => (sim.innerHTML = ""));
+}
+
+// En titel man inte har (från liknande/skådespelare): visa kort info och ★ Önska
+function viewTmdbTitle(c) {
+  openSheet(`<h2>${esc(c.title)}</h2>
+    <div class="detail">${c.poster_path ? `<img class="poster" src="${TMDB_IMG}w342${esc(c.poster_path)}" alt="">` : `<div class="poster none"></div>`}
+      <div class="facts"><div>${c.year || ""} · ${c.type === "tv" ? "Serie" : "Film"}</div>${c.role ? `<div class="muted">${esc(c.role)}</div>` : ""}</div></div>
+    <div class="actions">${c.wished ? `<span class="star-text">★ På önskelistan</span>` : `<button class="btn primary" id="t-wish">★ Lägg på önskelistan</button>`}
+      <button class="btn" id="t-add">Jag har den – lägg till</button></div>`);
+  $("#t-wish") && ($("#t-wish").onclick = async () => {
+    await api("/api/items", { method: "POST", json: { tmdb_id: c.tmdb_id, type: c.type, wish: true, force: true, format: null, library_id: currentLibId() } });
+    c.wished = true; toast(`★ ${esc(c.title)} på önskelistan`, "ok"); load(); refresh();
+  });
+  $("#t-add").onclick = () => show(viewAdd, { query: `${c.title} ${c.year || ""}`.trim() });
+}
+
+async function viewPerson(name) {
+  openSheet(`<h2>${esc(name)}</h2><p class="muted">Hämtar från TMDB…</p>`);
+  let p;
+  try { p = await api(`/api/person?name=${encodeURIComponent(name)}&${libParam()}`); }
+  catch (e) { return openSheet(`<h2>${esc(name)}</h2><div class="notice bad">${esc(e.message)}</div>`); }
+  const mine = p.works.filter((w) => w.owned.length), other = p.works.filter((w) => !w.owned.length);
+  const row = (w, i, from) => `<div class="list-item" data-from="${from}" data-i="${i}">${w.poster_path ? `<img class="poster thumb" loading="lazy" src="${TMDB_IMG}w92${esc(w.poster_path)}" alt="">` : `<div class="poster none thumb"></div>`}
+    <div class="grow"><div class="li-title">${esc(w.title)}</div><div class="muted small">${w.year || "kommande"} · ${w.type === "tv" ? "Serie" : "Film"}${w.role ? ` · ${esc(w.role)}` : ""}</div></div>
+    ${w.owned.length ? `<span class="ok-text">✓</span>` : w.wished ? `<span class="star-text">★</span>` : `<span class="muted">›</span>`}</div>`;
+  openSheet(`<div class="person-head">${p.profile_path ? `<img src="${TMDB_IMG}w185${esc(p.profile_path)}" alt="">` : ""}
+      <div><h2>${esc(p.name)}</h2><div class="muted">${esc({ Acting: "Skådespelare", Directing: "Regissör", Writing: "Manus" }[p.known_for] || p.known_for || "")}</div>
+      <div class="notice ok small">Du har ${mine.length} av ${p.works.length}</div></div></div>
+    ${mine.length ? `<h3>I din samling (${mine.length})</h3>${mine.map((w, i) => row(w, i, "mine")).join("")}` : ""}
+    ${other.length ? `<h3>Saknas (${other.length})</h3>${other.slice(0, 80).map((w, i) => row(w, i, "other")).join("")}` : ""}`);
+  const lists = { mine, other };
+  $$("#sheet-body .list-item[data-from]").forEach((el) => (el.onclick = () => {
+    const w = lists[el.dataset.from][el.dataset.i];
+    if (w.owned.length) show(viewItem, w.owned[0].id); else show(viewTmdbTitle, w);
+  }));
+}
+
+async function viewTrailer(it) {
+  openSheet(`<h2>Trailer</h2><p class="muted">${esc(it.title)}</p><p class="muted">Hämtar…</p>`);
+  try {
+    const t = await api(`/api/items/${it.id}/trailer`);
+    openSheet(`<h2>Trailer</h2><p class="muted">${esc(t.name || it.title)}</p>
+      <div class="video-frame"><iframe src="https://www.youtube-nocookie.com/embed/${esc(t.key)}?autoplay=1&rel=0"
+        allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen title="Trailer"></iframe></div>`);
+  } catch (e) { openSheet(`<h2>Trailer</h2><div class="notice bad">${esc(e.message)}</div>`); }
+}
+
+const names = (s) => (s || "").split(" | ").map((n) => n.trim()).filter(Boolean);
+const personLinks = (s) => names(s).map((n) => `<a href="#" class="person" data-p="${esc(n)}">${esc(n)}</a>`).join(", ");
 
 // Omslagets färg blir detaljvyns tonfärg (fungerar eftersom omslagen kommer från samma server)
 function tintFromPoster() {
@@ -522,7 +815,7 @@ function heroHtml(it, subtitle) {
 
 function loanNotice(it) {
   const overdue = it.loaned_to && it.due_date && it.due_date < today();
-  return (isWish(it) ? `<div class="notice star">★ På önskelistan</div>` : "") +
+  return statusNotices(it) +
     (it.loaned_to ? `<div class="notice ${overdue ? "bad" : "warn"}">Utlånad till <b>${esc(it.loaned_to)}</b>
       ${it.loan_date ? ` sedan ${esc(it.loan_date)}` : ""}${it.due_date ? ` · åter ${esc(it.due_date)}${overdue ? " (försenad!)" : ""}` : ""}</div>` : "");
 }
@@ -541,18 +834,22 @@ async function viewItem(id) {
         ${it.format ? `<div class="fmt-line">${fmtBadge(it.format)}</div>` : ""}
         ${fact("År", it.year)}${fact("Utgåva", it.edition)}
         ${fact("Längd", it.runtime && `${it.runtime} min`)}${fact("Genre", pipe(it.genres))}
-        ${fact(it.kind === "tv" ? "Regi/skapare" : "Regi", pipe(it.director))}
-        ${fact("IMDb", it.imdb_rating)}${fact("Mitt betyg", it.my_rating)}${fact("Plats", it.location)}
+        ${it.director ? `<div><b>${it.kind === "tv" ? "Regi/skapare" : "Regi"}:</b> ${personLinks(it.director)}</div>` : ""}
+        ${fact("IMDb", it.imdb_rating)}${fact("Mitt betyg", it.my_rating)}${placeLink(it)}
         ${fact("Skivor", it.nr_discs)}${fact("Streckkod", it.barcode)}${fact("Undertext", pipe(x["Subtitles"]))}
         ${fact("Inköpt", [it.purchase_price && `${it.purchase_price} kr`, x["Purchase Date"]].filter(Boolean).join(", "))}
+        ${conditionFact(it)}
         ${state.libs.length > 1 ? fact("Samling", it.library_name) : ""}
         ${it.digital_sources?.length ? `<div><b>Digitalt:</b> ${it.digital_sources.map((s) => s === "plex" ? "Plex" : "Jellyfin").join(", ")} ▶</div>` : ""}
-        ${it.collection_name ? `<div><b>Filmserie:</b> <a href="#" id="b-coll">${esc(it.collection_name)}</a></div>` : ""}`;
+        ${it.collection_name ? `<div><b>Filmserie:</b> <a href="#" id="b-coll">${esc(it.collection_name)}</a></div>` : ""}
+        <div id="views-line" class="small"></div>`;
   $("#sheet-body").insertAdjacentHTML("beforeend", `
-    ${it.actors ? `<h3>Skådespelare</h3><div class="plot">${esc(pipe(it.actors))}</div>` : ""}
+    ${tagChips(it)}
+    ${it.actors ? `<h3>Skådespelare</h3><div class="plot">${personLinks(it.actors)}</div>` : ""}
     ${it.plot ? `<h3>Handling</h3><div class="plot">${esc(it.plot)}</div>` : ""}
     ${it.notes ? `<h3>Anteckningar</h3><div class="plot">${esc(it.notes)}</div>` : ""}
     <div class="actions">
+      ${it.tmdb_id ? `<button class="btn primary" id="b-trailer">▶ Trailer</button>` : ""}
       ${wish ? `<button class="btn primary" id="b-bought">Köpt! Flytta till samlingen</button>` : `
       <button class="btn ${it.watched ? "primary" : ""}" id="b-watched">${it.watched ? "✓ Sedd" : "Markera som sedd"}</button>
       ${it.loaned_to ? `<button class="btn primary" id="b-return">Återlämnad</button>` : `<button class="btn" id="b-loan">Låna ut</button>`}`}
@@ -564,8 +861,15 @@ async function viewItem(id) {
       ${it.imdb_id ? `<a class="btn" href="https://www.imdb.com/title/${esc(it.imdb_id)}/" target="_blank" rel="noopener">IMDb</a>` : ""}
       <button class="btn danger" id="b-del">Ta bort</button>
     </div>
+    <div id="providers"></div>
+    <div id="similar"></div>
     ${it.locked?.length ? `<p class="muted small">Ändrat av dig (skrivs inte över): ${it.locked.map(fieldName).join(", ")}</p>` : ""}`);
   tintFromPoster();
+  bindCommon(it);
+  loadViews(it);
+  loadExtras(it);
+  $$("#sheet-body .person").forEach((a) => (a.onclick = (e) => { e.preventDefault(); show(viewPerson, a.dataset.p); }));
+  $("#b-trailer") && ($("#b-trailer").onclick = () => show(viewTrailer, it));
   const done = async (msg) => { if (msg) toast(msg); refresh(); load(); };
   $("#b-watched") && ($("#b-watched").onclick = async () => { await patch(id, { watched: it.watched ? 0 : 1 }); done(); });
   $("#b-bought") && ($("#b-bought").onclick = async () => {
@@ -581,11 +885,20 @@ async function viewItem(id) {
   $("#b-own").onclick = () => show(viewOwnCover, it);
   $("#b-rematch").onclick = () => show(viewRematch, it);
   $("#b-coll") && ($("#b-coll").onclick = (e) => { e.preventDefault(); show(viewCollection, it.collection_id); });
-  $("#b-del").onclick = async () => {
-    if (!confirm(`Ta bort "${it.title}"?`)) return;
-    await api(`/api/items/${id}`, { method: "DELETE" });
-    back(); load(); toast("Borttagen");
-  };
+  $("#b-del").onclick = () => deleteItem(it);
+}
+
+// Ta bort = till papperskorgen, med "Ångra" direkt i meddelandet
+async function deleteItem(it) {
+  if (!confirm(`Flytta "${it.title}" till papperskorgen?`)) return;
+  await api(`/api/items/${it.id}`, { method: "DELETE" });
+  back(); load();
+  toast(`Flyttad till papperskorgen · <a href="#" id="undo">Ångra</a>`);
+  $("#undo") && ($("#undo").onclick = async (e) => {
+    e.preventDefault();
+    await api(`/api/trash/${it.id}/restore`, { method: "POST" });
+    toast("Tillbaka i samlingen", "ok"); load();
+  });
 }
 
 // ---------- Musik: album ----------
@@ -613,11 +926,12 @@ function viewAlbum(it) {
     ${fact("Skivbolag", it.label)}${fact("Katalognr", it.cat_no)}
     ${fact("Skivor", it.nr_discs > 1 ? it.nr_discs : null)}${fact("Spår", it.tracks)}
     ${fact("Speltid", it.runtime && lenText(it.runtime))}${fact("Genre", pipe(it.genres))}
-    ${fact("Mitt betyg", it.my_rating)}${fact("Plats", it.location)}${fact("Streckkod", it.barcode)}
-    ${fact("Inköpt", it.purchase_price && `${it.purchase_price} kr`)}
+    ${fact("Mitt betyg", it.my_rating)}${placeLink(it)}${fact("Streckkod", it.barcode)}
+    ${fact("Inköpt", it.purchase_price && `${it.purchase_price} kr`)}${conditionFact(it)}
     ${state.libs.length > 1 ? fact("Samling", it.library_name) : ""}`;
   const wish = isWish(it);
   $("#sheet-body").insertAdjacentHTML("beforeend", `
+    ${tagChips(it)}
     ${tracklistHtml(it.tracklist, it.artist)}
     ${!it.tracklist?.length && it.enriched === 0 ? `<p class="muted small">Låtlistan hämtas i bakgrunden…</p>` : ""}
     ${it.notes ? `<h3>Anteckningar</h3><div class="plot">${esc(it.notes)}</div>` : ""}
@@ -634,6 +948,7 @@ function viewAlbum(it) {
     </div>
     ${it.locked?.length ? `<p class="muted small">Ändrat av dig (skrivs inte över): ${it.locked.map(fieldName).join(", ")}</p>` : ""}`);
   tintFromPoster();
+  bindCommon(it);
   const done = (msg) => { if (msg) toast(msg); refresh(); load(); };
   $("#b-bought") && ($("#b-bought").onclick = async () => {
     await patch(it.id, { collection_status: "In Collection", added_date: today() }); done("Flyttad till samlingen");
@@ -652,15 +967,12 @@ function viewAlbum(it) {
       done("Info hämtad");
     } catch (err) { toast(esc(err.message), "bad"); e.target.disabled = false; e.target.textContent = "Hämta info igen"; }
   };
-  $("#b-del").onclick = async () => {
-    if (!confirm(`Ta bort "${it.title}"?`)) return;
-    await api(`/api/items/${it.id}`, { method: "DELETE" });
-    back(); load(); toast("Borttagen");
-  };
+  $("#b-del").onclick = () => deleteItem(it);
 }
 
 async function viewAlbumEdit(it) {
   const f = await facets(false, "music");
+  state.allTags = await api("/api/tags").catch(() => []);
   const field = (k, label, type = "text", extra = "") =>
     `<label>${label}<input data-f="${k}" type="${type}" value="${esc(it[k] ?? "")}" ${extra}></label>`;
   openSheet(`
@@ -680,20 +992,41 @@ async function viewAlbumEdit(it) {
         <label>Status<select data-f="collection_status">
           ${option("In Collection", "I samlingen", it.collection_status || "In Collection")}
           ${option("On Wish List", "Önskelista", it.collection_status)}
+          ${option("For Sale", "Till salu", it.collection_status)}
           ${option("Sold", "Såld", it.collection_status)}</select></label>
         ${state.libs.length > 1 ? `<label>Samling<select data-f="library_id">${libOptions(it.library_id)}</select></label>` : ""}
       </div>
       <label>Anteckningar<textarea data-f="notes" rows="3">${esc(it.notes || "")}</textarea></label>
+      ${moreFields(it, true)}
     </div>
     <button class="btn primary" id="e-save">Spara</button>`);
   $("#e-save").onclick = () => saveEdits(it);
 }
 
+// Fält som är gemensamma för film och musik: taggar, skick, försäljning, uppgradering, prisbevakning
+const CONDITIONS = ["Nyskick", "Mycket bra", "Bra", "Okej", "Dålig"];
+const UPGRADES = (music) => (music ? ["Vinyl", "SACD", "CD"] : ["Blu-ray", "4K UHD", "Blu-ray 3D", "Steelbook"]);
+function moreFields(it, music) {
+  const num = (k, label) => `<label>${label}<input data-f="${k}" type="number" step="1" min="0" value="${esc(it[k] ?? "")}"></label>`;
+  return `
+      <label>Taggar (flera med komma emellan)<input data-f="tags" data-tags="1" type="text" list="e-tags" value="${esc((it.tags || "").replaceAll(" | ", ", "))}"
+        placeholder="T.ex. Jul, Barnvänligt"></label>
+      <datalist id="e-tags">${(state.allTags || []).map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+      <h3>Skick och försäljning</h3>
+      <div class="two"><label>Skick<select data-f="condition">${option("", "–", it.condition || "")}${CONDITIONS.map((c) => option(c, c, it.condition || "")).join("")}</select></label>
+        ${num("sell_price", "Säljpris (kr)")}</div>
+      <label>Om skicket<input data-f="condition_notes" type="text" value="${esc(it.condition_notes || "")}" placeholder="Repor, saknat häfte, fel fodral…"></label>
+      <p class="muted small">Sätt status till <i>Till salu</i> så hamnar titeln på Säljlistan.</p>
+      <h3>Önskelista</h3>
+      <div class="two"><label>Vill uppgradera till<select data-f="upgrade_to">${option("", "–", it.upgrade_to || "")}${[...new Set([...UPGRADES(music), it.upgrade_to].filter(Boolean))].map((x) => option(x, x, it.upgrade_to || "")).join("")}</select></label>
+        ${num("wish_price", "Köp om högst (kr)")}</div>`;
+}
+
 async function saveEdits(it) {
   const changes = {};
   for (const el of $$("[data-f]", $("#sheet-body"))) {
-    const before = String(it[el.dataset.f] ?? "");
-    if (el.value !== before) changes[el.dataset.f] = el.value; // skicka bara det som ändrats
+    const before = el.dataset.tags ? (it.tags || "").replaceAll(" | ", ", ") : String(it[el.dataset.f] ?? "");
+    if (el.value !== before) changes[el.dataset.f] = el.dataset.tags ? el.value.split(",") : el.value; // bara det som ändrats
   }
   if (Object.keys(changes).length) await patch(it.id, changes);
   state.facets = null;
@@ -920,6 +1253,7 @@ function viewLoan(it) {
 
 async function viewEdit(it) {
   const f = await facets(false, "video");
+  state.allTags = await api("/api/tags").catch(() => []);
   const field = (k, label, type = "text", extra = "") =>
     `<label>${label}<input id="e-${k}" data-f="${k}" type="${type}" value="${esc(it[k] ?? "")}" ${extra}></label>`;
   openSheet(`
@@ -938,24 +1272,15 @@ async function viewEdit(it) {
         <label>Status<select id="e-collection_status" data-f="collection_status">
           ${option("In Collection", "I samlingen", it.collection_status || "In Collection")}
           ${option("On Wish List", "Önskelista", it.collection_status)}
+          ${option("For Sale", "Till salu", it.collection_status)}
           ${option("Sold", "Såld", it.collection_status)}</select></label>
         ${state.libs.length > 1 ? `<label>Samling<select id="e-library_id" data-f="library_id">${libOptions(it.library_id)}</select></label>` : ""}
       </div>
       <label>Anteckningar<textarea id="e-notes" data-f="notes" rows="3">${esc(it.notes || "")}</textarea></label>
+      ${moreFields(it, false)}
     </div>
     <button class="btn primary" id="e-save">Spara</button>`);
-  $("#e-save").onclick = async () => {
-    const changes = {};
-    for (const el of $$("[data-f]", $("#sheet-body"))) {
-      const before = String(it[el.dataset.f] ?? "");
-      if (el.value !== before) changes[el.dataset.f] = el.value; // skicka bara det som ändrats
-    }
-    if (Object.keys(changes).length) await patch(it.id, changes);
-    state.facets = null;
-    toast("Sparat");
-    if (changes.library_id) await loadLibs();
-    back(); load();
-  };
+  $("#e-save").onclick = () => saveEdits(it);
 }
 
 async function viewPosters(it) {
@@ -1191,21 +1516,34 @@ const codeView = () => (scanMode === "music" ? viewMusicCode : viewCode);
 // Vanlig skanning: en kod i taget, eller serieläge där kameran står kvar
 function viewScan() {
   const serial = store.get("serialScan", false);
+  const hint = () => (scanMode === "music" ? "Streckkod eller album" : scanMode === "loan" ? "Streckkod" : "Streckkod eller titel");
   openSheet(scannerHtml("Skanna streckkod", `
     <div class="seg-switch" id="scan-mode"><button data-m="video" class="${scanMode === "video" ? "on" : ""}">🎬 Film & serier</button>
-      <button data-m="music" class="${scanMode === "music" ? "on" : ""}">🎵 Musik</button></div>
+      <button data-m="music" class="${scanMode === "music" ? "on" : ""}">🎵 Musik</button>
+      <button data-m="loan" class="${scanMode === "loan" ? "on" : ""}">🤝 Utlåning</button></div>
+    <div id="loan-box" ${scanMode === "loan" ? "" : "hidden"}>
+      <p class="muted small">Skanna en skiva för att låna ut den – eller skanna en utlånad skiva för att markera den som återlämnad.</p>
+      <div class="two form"><label>Lånas ut till<input id="loan-to" type="text" list="l-names" value="${esc(store.get("loanTo", ""))}" placeholder="Namn"></label>
+        <label>Åter om<select id="loan-days">${[14, 30, 60, 90].map((d) => option(d, `${d} dagar`, store.get("loanDays", 30))).join("")}</select></label></div>
+      <datalist id="l-names">${store.get("loanNames", []).map((n) => `<option value="${esc(n)}">`).join("")}</datalist>
+    </div>
     <p class="muted small">${scanWhere()}</p>
-    <label class="check"><input type="checkbox" id="serial" ${serial ? "checked" : ""}> Skanna i serie (kameran står kvar)</label>
-    <div id="queue"></div>`, scanMode === "music" ? "Streckkod eller album" : "Streckkod eller titel"));
+    <label class="check" id="serial-row" ${scanMode === "loan" ? "hidden" : ""}><input type="checkbox" id="serial" ${serial ? "checked" : ""}> Skanna i serie (kameran står kvar)</label>
+    <div id="queue"></div>`, hint()));
   $("#serial").onchange = (e) => store.set("serialScan", e.target.checked);
+  $("#loan-to").oninput = (e) => store.set("loanTo", e.target.value.trim());
+  $("#loan-days").onchange = (e) => store.set("loanDays", +e.target.value);
   $$("#scan-mode button").forEach((b) => (b.onclick = () => {
     scanMode = b.dataset.m;
     $$("#scan-mode button").forEach((x) => x.classList.toggle("on", x === b));
-    $("#manual").placeholder = scanMode === "music" ? "Streckkod eller album" : "Streckkod eller titel";
+    $("#manual").placeholder = hint();
+    $("#loan-box").hidden = scanMode !== "loan";
+    $("#serial-row").hidden = scanMode === "loan";
     renderQueue();
   }));
   renderQueue();
   startCamera(async (code) => {
+    if (scanMode === "loan") return loanByScan(code);
     if (!$("#serial")?.checked) {
       stopScan();
       beep("new");
@@ -1229,6 +1567,26 @@ function viewScan() {
       resolveQueued(code);
     }
   }, (text) => show(scanMode === "music" ? viewMusicAdd : viewAdd, { query: text }));
+}
+
+// Utlåning med streckkod: utlånad skiva -> återlämnad, annars låna ut till namnet i rutan
+async function loanByScan(code) {
+  const r = await api(`/api/barcode/${code}?lib=${scanLib()}&local=1`);
+  const it = r.existing.find((e) => !isWish(e));
+  if (!it) { beep("new"); return toast(`Okänd streckkod ${code} – finns inte i samlingen`, "bad"); }
+  if (it.loaned_to) {
+    beep("owned");
+    await patch(it.id, { loaned_to: null, loan_date: null, due_date: null });
+    load();
+    return toast(`↩ Återlämnad: <b>${esc(it.title)}</b> (från ${esc(it.loaned_to)})`, "ok");
+  }
+  const name = ($("#loan-to")?.value || "").trim();
+  if (!name) { beep("wish"); $("#loan-to")?.focus(); return toast("Skriv vem som lånar först", "warn"); }
+  const days = +($("#loan-days")?.value || 30);
+  store.set("loanNames", [name, ...store.get("loanNames", []).filter((n) => n !== name)].slice(0, 20));
+  await patch(it.id, { loaned_to: name, loan_date: today(), due_date: ymd(new Date(Date.now() + days * 864e5)) });
+  beep("owned"); load();
+  toast(`🤝 <b>${esc(it.title)}</b> utlånad till ${esc(name)}`, "ok");
 }
 
 // Kön från serieskanning (en för film, en för musik). Titlarna slås upp i bakgrunden så att du ser vad som ligger där.
@@ -1583,9 +1941,11 @@ async function viewStats(part = musicTab() ? "music" : "video") {
   const s = await api(`/api/stats?${libParam()}`);
   const tile = (n, label, hl = false) => `<div class="tile ${hl ? "hl" : ""}"><b>${n}</b><span>${label}</span></div>`;
   const m = s.music, v = s.value;
-  const parts = { video: "Film & serier", music: "Musik", value: "Värde & dubbletter" };
+  const parts = { video: "Film & serier", music: "Musik", value: "Värde & dubbletter", growth: "Utveckling" };
   let body;
-  if (part === "music") {
+  if (part === "growth") {
+    body = `<h3>Så har samlingen vuxit</h3>${growthChart(await api(`/api/growth?${libParam()}`))}`;
+  } else if (part === "music") {
     const hours = Math.round(m.minutes / 60);
     body = m.albums ? `
       <div class="tiles">
@@ -1790,9 +2150,13 @@ async function viewMenu() {
     ${entry("m-add-music", "🎵", "Musik", "Sök på artist och album")}
     ${entry("m-bulk", "☰", "Lägg till flera filmer", "Klistra in en lista med titlar")}
     ${group("Samlingen")}
-    ${entry("m-stats", "📊", "Statistik", "Även värde och dubbletter")}
+    ${entry("m-stats", "📊", "Statistik", "Värde, dubbletter och utveckling")}
+    ${entry("m-year", "🎉", "Årsöversikt", "Ditt år i Diskoteket")}
     ${entry("m-coll", "🎞", "Filmserier", "Se vilka delar du saknar")}
     ${entry("m-loans", "🤝", "Utlånat")}
+    ${entry("m-share", "👋", "Visa-sida för vänner", s.loan_requests ? `<b class="bad-text">${s.loan_requests} låneförfrågan${s.loan_requests === 1 ? "" : "ningar"}</b>` : s.share ? "På" : "Av")}
+    ${entry("m-places", "📍", "Hyllkarta", "Platser med foto")}
+    ${entry("m-sale", "🏷", "Säljlista", "Annonstext till Tradera/Blocket")}
     ${entry("m-inv", "📋", "Inventering", "Skanna hyllan och se vad som saknas")}
     ${s.digital.configured.length ? entry("m-digital", "▶", "Bara digitalt", "Finns i Plex/Jellyfin men inte på skiva") : ""}
     ${entry("m-missing", "🖼", "Saknar omslag", c.no_poster ? `${c.no_poster} filmer/serier` : "")}
@@ -1803,6 +2167,8 @@ async function viewMenu() {
     ${group("Data")}
     ${entry("m-import", "⬆", "Importera från CLZ", "CLZ Movies eller CLZ Music (CSV)")}
     ${entry("m-export", "⬇", "Exportera", "CSV eller JSON")}
+    ${entry("m-history", "👁", "Tittarhistorik", "Importera från Letterboxd eller Trakt")}
+    ${entry("m-trash", "🗑", "Papperskorgen", s.trash ? `${s.trash} st – går att ångra` : "Tom")}
     ${entry("m-backup", "💾", "Säkerhetskopior", s.backups[0] ? `Senast ${s.backups[0].time.replace("T", " ")} · återställ` : "Ta en kopia eller återställ")}
     ${group("Inställningar")}
     ${entry("m-settings", "⚙", "Inställningar", "TMDB, musik, omslag, Plex/Jellyfin")}
@@ -1816,7 +2182,9 @@ async function viewMenu() {
     "m-missing-music": () => show(viewMissing, "music"), "m-digital": () => show(viewDigitalOnly),
     "m-refresh": () => show(viewRefreshLib), "m-libs": () => show(viewLibManage), "m-export": () => show(viewExport),
     "m-import": () => show(viewImport), "m-backup": () => show(viewBackups), "m-auth": () => show(viewAuth),
-    "m-ha": () => show(viewHA), "m-settings": () => show(viewSettings) };
+    "m-ha": () => show(viewHA), "m-settings": () => show(viewSettings), "m-year": () => show(viewYear),
+    "m-share": () => show(viewShare), "m-places": () => show(viewPlaces), "m-sale": () => show(viewSale),
+    "m-history": () => show(viewHistoryImport), "m-trash": () => show(viewTrash) };
   for (const [id, fn] of Object.entries(go)) $("#" + id) && ($("#" + id).onclick = fn);
   $("#m-fix") && ($("#m-fix").onclick = (ev) => { ev.preventDefault(); show(viewSettings); });
   if (e.running || p.running || m.running) setTimeout(() => stack.at(-1)?.[0] === viewMenu && !$("#sheet").hidden && refresh(), 1500);
@@ -2079,6 +2447,275 @@ async function viewHA() {
         value_template: "{{ value_json.overdue }}"</pre>`);
 }
 
+// ---------- Massredigering ----------
+
+async function viewBulkEdit() {
+  const ids = [...state.selected];
+  const f = await facets(false, musicTab() ? "music" : "video");
+  const tags = await api("/api/tags").catch(() => []);
+  const keep = `<option value="__keep__">– oförändrat –</option>`;
+  openSheet(`<h2>Ändra ${ids.length} ${ids.length === 1 ? "titel" : "titlar"}</h2>
+    <p class="muted small">Bara det du ändrar här sparas. Ändringarna skrivs inte över av en ny CLZ-import.</p>
+    <div class="form">
+      <div class="two"><label>Plats<input id="b-location" type="text" list="b-locs" placeholder="– oförändrat –"></label>
+        <label>Format<input id="b-format" type="text" list="b-formats" placeholder="– oförändrat –"></label></div>
+      <datalist id="b-locs">${f.locations.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <datalist id="b-formats">${[...new Set([...(musicTab() ? MUSIC_FORMATS : ["DVD", "Blu-ray", "4K UHD", "VHS"]), ...f.formats])].map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+      <div class="two"><label>Status<select id="b-status">${keep}${option("In Collection", "I samlingen", "")}${option("On Wish List", "Önskelista", "")}
+          ${option("For Sale", "Till salu", "")}${option("Sold", "Såld", "")}</select></label>
+        ${state.libs.length > 1 ? `<label>Flytta till samling<select id="b-lib">${keep}${libOptions("")}</select></label>` : ""}</div>
+      <div class="two"><label>Skick<select id="b-condition">${keep}${CONDITIONS.map((c) => option(c, c, "")).join("")}</select></label>
+        <label>Sedd<select id="b-watched">${keep}${option("1", "Sedd", "")}${option("0", "Inte sedd", "")}</select></label></div>
+      <label>Vill uppgradera till<select id="b-upgrade">${keep}${option("", "– ingen –", "__")}${UPGRADES(musicTab()).map((x) => option(x, x, "")).join("")}</select></label>
+      <div class="two"><label>Lägg till taggar<input id="b-addtags" type="text" list="b-tags" placeholder="Jul, Barnvänligt"></label>
+        <label>Ta bort taggar<input id="b-rmtags" type="text" list="b-tags"></label></div>
+      <datalist id="b-tags">${tags.map((t) => `<option value="${esc(t)}">`).join("")}</datalist>
+    </div>
+    <button class="btn primary" id="b-save">Spara ändringar</button>
+    <button class="btn danger" id="b-trash">Flytta till papperskorgen</button>`);
+  const split = (v) => v.split(",").map((t) => t.trim()).filter(Boolean);
+  $("#b-save").onclick = async () => {
+    const changes = {};
+    if ($("#b-location").value.trim()) changes.location = $("#b-location").value.trim();
+    if ($("#b-format").value.trim()) changes.format = $("#b-format").value.trim();
+    for (const [id, k] of [["#b-status", "collection_status"], ["#b-lib", "library_id"], ["#b-condition", "condition"],
+      ["#b-watched", "watched"], ["#b-upgrade", "upgrade_to"]]) {
+      if ($(id) && $(id).value !== "__keep__") changes[k] = $(id).value;
+    }
+    const r = await api("/api/items/bulk", { method: "POST", json: { ids, changes,
+      add_tags: split($("#b-addtags").value), remove_tags: split($("#b-rmtags").value) } });
+    toast(`✓ ${r.updated} ändrade`, "ok");
+    state.facets = null;
+    stopSelect(); closeSheet();
+  };
+  $("#b-trash").onclick = async () => {
+    if (!confirm(`Flytta ${ids.length} titlar till papperskorgen? Det går att ångra i 30 dagar.`)) return;
+    const r = await api("/api/items/bulk", { method: "POST", json: { ids, delete: true } });
+    toast(`${r.deleted} flyttade till papperskorgen`);
+    stopSelect(); closeSheet();
+  };
+}
+
+// ---------- Papperskorgen ----------
+
+async function viewTrash() {
+  const list = await api("/api/trash");
+  openSheet(`<h2>Papperskorgen (${list.length})</h2>
+    <p class="muted small">Borttagna titlar sparas i 30 dagar. Sedan töms de automatiskt.</p>
+    ${list.map((t) => `<div class="list-item">${poster(t.poster_path, "", t.kind === "music" ? "thumb square" : "thumb")}
+      <div class="grow"><div class="li-title">${esc(t.title)}</div>
+      <div class="muted small">${t.kind === "music" ? esc(artistName(t.artist)) + " · " : ""}${t.year || ""} ${fmtBadge(t.format, "sm")} · borttagen ${esc(t.deleted.slice(0, 10))}</div></div>
+      <button class="btn small" data-restore="${t.id}">Ångra</button></div>`).join("") || `<p class="muted">Papperskorgen är tom.</p>`}
+    ${list.length ? `<button class="btn danger" id="t-empty">Töm papperskorgen nu</button>` : ""}`);
+  $$("[data-restore]").forEach((b) => (b.onclick = async () => {
+    await api(`/api/trash/${b.dataset.restore}/restore`, { method: "POST" });
+    toast("Tillbaka i samlingen", "ok"); refresh(); load();
+  }));
+  $("#t-empty") && ($("#t-empty").onclick = async () => {
+    if (!confirm("Ta bort allt i papperskorgen för gott? Det går inte att ångra.")) return;
+    await api("/api/trash", { method: "DELETE" }); refresh();
+  });
+}
+
+// ---------- Säljlistan ----------
+
+function adText(it) {
+  const what = isMusic(it) ? `${artistName(it.artist)} – ${it.title}` : it.title;
+  const lines = [`${what}${it.year ? ` (${it.year})` : ""}${it.format ? ` – ${it.format}` : ""}`];
+  if (it.condition) lines.push(`Skick: ${it.condition}${it.condition_notes ? ` (${it.condition_notes})` : ""}`);
+  else if (it.condition_notes) lines.push(`Skick: ${it.condition_notes}`);
+  if (isMusic(it) && it.tracks) lines.push(`${it.tracks} spår${it.label ? `, ${it.label}` : ""}`);
+  if (it.sell_price) lines.push(`Pris: ${Math.round(it.sell_price)} kr`);
+  return lines.join("\n");
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); toast("Kopierad – klistra in i annonsen", "ok"); }
+  catch { prompt("Kopiera texten:", text); }
+}
+
+async function viewSale() {
+  const list = await api(`/api/items?status=sale&sort=title&${libParam()}`);
+  const full = await Promise.all(list.map((i) => api(`/api/items/${i.id}`)));
+  const total = full.reduce((a, i) => a + (i.sell_price || 0), 0);
+  openSheet(`<h2>Säljlista (${full.length})</h2>
+    <p class="muted small">Titlar med status <i>Till salu</i>. Sätt pris och skick under Redigera, eller markera många med <b>Välj</b>.</p>
+    ${full.length ? `<div class="notice">Totalt begärt: <b>${kronor(total)}</b>
+      <div><button class="btn small" id="s-all">📋 Kopiera annonstext för allt</button></div></div>` : ""}
+    ${full.map((it) => `<div class="list-item" data-id="${it.id}">${poster(it.poster_path, "", isMusic(it) ? "thumb square" : "thumb")}
+      <div class="grow"><div class="li-title">${esc(it.title)}</div>
+      <div class="muted small li-sub">${isMusic(it) ? esc(artistName(it.artist)) + " · " : ""}${fmtBadge(it.format, "sm")} ${esc(it.condition || "skick ej angivet")}</div></div>
+      <b>${it.sell_price ? kronor(it.sell_price) : "–"}</b>
+      <button class="btn small" data-copy="${it.id}" title="Kopiera annonstext">📋</button>
+      <button class="btn small" data-sold="${it.id}">Såld</button></div>`).join("") || `<p class="muted">Inget till salu just nu.</p>`}
+    <p class="muted small">Annonstexten passar Tradera, Blocket och Facebook Marketplace.</p>`);
+  const byId = Object.fromEntries(full.map((i) => [i.id, i]));
+  $$("#sheet-body .list-item[data-id]").forEach((el) => (el.onclick = (e) => {
+    if (e.target.closest("button")) return;
+    show(viewItem, +el.dataset.id);
+  }));
+  $$("[data-copy]").forEach((b) => (b.onclick = () => copyText(adText(byId[b.dataset.copy]))));
+  $$("[data-sold]").forEach((b) => (b.onclick = async () => {
+    await patch(b.dataset.sold, { collection_status: "Sold", loaned_to: null }); toast("Markerad som såld", "ok"); refresh(); load();
+  }));
+  $("#s-all") && ($("#s-all").onclick = () => copyText(full.map(adText).join("\n\n")));
+}
+
+// ---------- Hyllkartan ----------
+
+async function viewPlaces() {
+  const list = await api(`/api/locations?${libParam()}`);
+  openSheet(`<h2>Hyllkarta</h2>
+    <p class="muted small">Dina platser med foto och beskrivning, så du hittar skivan fort. Platsen sätts under Redigera
+      (eller för många på en gång med <b>Välj</b>).</p>
+    <div class="places">${list.map((l, i) => `<div class="place" data-i="${i}">
+      <div class="place-img" ${l.photo ? `style="background-image:url('/poster${esc(l.photo)}')"` : ""}>${l.photo ? "" : "📦"}</div>
+      <b>${esc(l.name)}</b><span class="muted small">${l.count} ${l.count === 1 ? "titel" : "titlar"}</span></div>`).join("")}</div>
+    ${list.length ? "" : `<p class="muted">Inga platser än.</p>`}
+    <h3>Ny plats</h3><div class="row"><input id="p-new" type="text" placeholder="T.ex. Hylla A, rad 3"><button class="btn primary" id="p-add">Skapa</button></div>`);
+  $$(".place").forEach((el) => (el.onclick = () => show(viewPlace, list[el.dataset.i].name)));
+  $("#p-add").onclick = async () => {
+    const name = $("#p-new").value.trim();
+    if (!name) return;
+    await api("/api/locations", { method: "PUT", json: { name } });
+    show(viewPlace, name);
+  };
+}
+
+async function viewPlace(name) {
+  const [locs, items] = await Promise.all([api("/api/locations"), api(`/api/items?status=all&location=${encodeURIComponent(name)}&lib=all`)]);
+  const l = locs.find((x) => x.name === name) || { name, count: 0 };
+  openSheet(`<h2>📍 ${esc(name)}</h2>
+    ${l.photo ? `<img class="place-photo" src="/poster${esc(l.photo)}" alt="">` : ""}
+    <div class="form">
+      <label>Beskrivning<input id="p-desc" type="text" value="${esc(l.description || "")}" placeholder="T.ex. Vardagsrummet, vänstra hyllan"></label>
+      <div class="row"><label class="btn file-btn">📷 ${l.photo ? "Byt foto" : "Lägg till foto"}<input type="file" id="p-photo" accept="image/*" capture="environment" hidden></label>
+        <button class="btn" id="p-save">Spara</button><button class="btn" id="p-rename">Byt namn</button></div>
+    </div>
+    <h3>Här står (${items.length})</h3>${items.map((i) => listItem(i)).join("") || `<p class="muted">Inget registrerat här.</p>`}`);
+  bindOpen();
+  $("#p-save").onclick = async () => { await api("/api/locations", { method: "PUT", json: { name, description: $("#p-desc").value } }); toast("Sparat", "ok"); };
+  $("#p-rename").onclick = async () => {
+    const nn = prompt("Nytt namn på platsen (alla titlar flyttas med):", name);
+    if (!nn || nn.trim() === name) return;
+    const r = await api("/api/locations", { method: "PUT", json: { name, new_name: nn } });
+    state.facets = null; stack[stack.length - 1] = [viewPlace, [r.name]]; viewPlace(r.name); load();
+  };
+  $("#p-photo").onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const fd = new FormData(); fd.append("name", name); fd.append("file", file);
+    try { await api("/api/locations/photo", { method: "POST", body: fd }); toast("Foto sparat", "ok"); refresh(); }
+    catch (err) { toast(esc(err.message), "bad"); }
+  };
+}
+
+// ---------- Årsöversikt ----------
+
+async function viewYear(year = null) {
+  const y = await api(`/api/year?${libParam()}${year ? `&year=${year}` : ""}`);
+  const tile = (n, label, hl = false) => `<div class="tile ${hl ? "hl" : ""}"><b>${n}</b><span>${label}</span></div>`;
+  const W = y.watched, A = y.added;
+  const months = ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "aug", "sep", "okt", "nov", "dec"];
+  const maxM = Math.max(1, ...W.months);
+  openSheet(`<div class="year-hero"><span class="muted small">Ditt år i</span><div class="logo big">Disk<span class="logo-o"></span>teket</div>
+      <div class="year-num">${y.year}</div></div>
+    ${y.years.length > 1 ? `<div class="seg-switch year-tabs">${y.years.slice(0, 6).map((x) => `<button data-y="${x}" class="${x === y.year ? "on" : ""}">${x}</button>`).join("")}</div>` : ""}
+    <div class="tiles">
+      ${tile(A.total, "nya i samlingen", true)}${tile(A.movies, "filmer")}${tile(A.seasons, "säsonger")}${tile(A.music, "album")}
+      ${tile(kronor(y.spent), "inköpt för")}${tile(W.views, "visningar")}
+    </div>
+    ${W.views ? `<h3>Sett per månad</h3><div class="month-bars">${W.months.map((n, i) => `<div><span style="height:${(n / maxM) * 100}%" title="${n}"></span><i>${months[i]}</i></div>`).join("")}</div>
+      <p class="muted small">${W.titles} olika titlar · ${Math.round(W.minutes / 60)} timmar${W.first ? ` · första: ${esc(W.first.title)} (${esc(W.first.date)})` : ""}</p>
+      ${W.genres.length ? `<h3>Mest sedda genrer</h3>${bars(W.genres)}` : ""}
+      ${W.most.length ? `<h3>Mest sedda</h3>${W.most.map((t) => listItem(t, `<span class="muted">${t.n}×</span>`)).join("")}` : ""}`
+      : `<p class="muted small">Inga visningar sparade för ${y.year}. Markera filmer som sedda, eller importera från Letterboxd/Trakt (Meny → Tittarhistorik).</p>`}
+    ${A.latest.length ? `<h3>Nytt i samlingen</h3><div class="mini-grid">${A.latest.map((i) => `<div class="card ${isMusic(i) ? "music" : ""}" data-id="${i.id}"><div class="pw">${poster(i.poster_path, i.title, isMusic(i) ? "square" : "")}</div>
+      <div class="t">${esc(i.title)}</div></div>`).join("")}</div>` : ""}
+    ${y.most_expensive.length ? `<h3>Dyraste köpen</h3>${y.most_expensive.map((t) => listItem(t, `<span class="muted">${kronor(t.purchase_price)}</span>`)).join("")}` : ""}
+    ${y.top_artists.length ? `<h3>Flest nya album av</h3>${bars(y.top_artists)}` : ""}`);
+  bindOpen();
+  $$(".mini-grid .card[data-id]").forEach((el) => (el.onclick = () => show(viewItem, +el.dataset.id)));
+  $$(".year-tabs button").forEach((b) => (b.onclick = () => { stack[stack.length - 1] = [viewYear, [+b.dataset.y]]; viewYear(+b.dataset.y); }));
+}
+
+// Samlingens utveckling: staplar för nya per år och en linje för hela samlingen
+function growthChart(g) {
+  const ys = g.years;
+  if (!ys.length) return `<p class="muted">Inga titlar med datum för när de lades till.</p>`;
+  const W = 640, H = 220, pad = 30, bw = (W - pad * 2) / ys.length;
+  const maxAdded = Math.max(...ys.map((y) => y.added)), maxTotal = Math.max(...ys.map((y) => y.total));
+  const x = (i) => pad + i * bw + bw / 2;
+  const line = ys.map((y, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${(H - pad - (y.total / maxTotal) * (H - pad * 2)).toFixed(1)}`).join(" ");
+  return `<svg class="growth" viewBox="0 0 ${W} ${H}" role="img" aria-label="Samlingens utveckling">
+    ${ys.map((y, i) => { const h = (y.added / maxAdded) * (H - pad * 2) * 0.8;
+      return `<rect x="${(pad + i * bw + bw * 0.18).toFixed(1)}" y="${(H - pad - h).toFixed(1)}" width="${(bw * 0.64).toFixed(1)}" height="${h.toFixed(1)}" rx="3"><title>${y.year}: ${y.added} nya</title></rect>`; }).join("")}
+    <path d="${line}" fill="none" stroke-width="3"/>
+    ${ys.map((y, i) => `<text x="${x(i).toFixed(1)}" y="${H - 10}" text-anchor="middle">${ys.length > 12 && i % 2 ? "" : String(y.year).slice(2)}</text>`).join("")}
+    <text x="${W - pad}" y="18" text-anchor="end" class="hl">${maxTotal} totalt</text></svg>
+    <p class="muted small"><span class="legend bar"></span> nya per år · <span class="legend line"></span> hela samlingen${g.undated ? ` · ${g.undated} titlar saknar datum och räknas inte` : ""}</p>
+    <div class="growth-table">${[...ys].reverse().map((y) => `<div><b>${y.year}</b><span>+${y.added}</span><span>${y.total} st</span>
+      <span>${y.spent ? kronor(y.spent) : ""}</span><span class="muted">${kronor(y.spent_total)}</span></div>`).join("")}</div>`;
+}
+
+// ---------- Vänsidan och låneförfrågningar ----------
+
+async function viewShare() {
+  const s = await api("/api/share");
+  const link = s.token ? `${location.origin}/share/${s.token}` : "";
+  openSheet(`<h2>Visa-sida för vänner</h2>
+    <p class="muted">En hemlig länk där vänner kan bläddra i samlingen och be om att få låna – utan att kunna ändra något.
+      De ser inte priser, anteckningar eller vem som lånat vad.</p>
+    ${s.enabled ? `<div class="notice ok"><div class="key">${esc(link)}</div>
+        <button class="btn small" id="sh-copy">📋 Kopiera länken</button>
+        <a class="btn small" href="${esc(link)}" target="_blank" rel="noopener">Öppna ↗</a></div>
+      <button class="btn" id="sh-new">Skapa ny länk</button><button class="btn danger" id="sh-off">Stäng av</button>
+      <p class="muted small">Ny länk = den gamla slutar fungera. Vänner utanför hemmet når bara sidan om appen går att nå utifrån.</p>`
+      : `<button class="btn primary" id="sh-on">Slå på vänsidan</button>`}
+    <h3>Låneförfrågningar (${s.requests.length})</h3>
+    ${s.requests.map((r) => `<div class="list-item">${poster(r.poster_path, "", r.kind === "music" ? "thumb square" : "thumb")}
+      <div class="grow"><div class="li-title">${esc(r.name)} vill låna ${esc(r.title || "(borttagen)")}</div>
+      <div class="muted small">${esc(r.created)}${r.message ? ` · ”${esc(r.message)}”` : ""}${r.loaned_to ? ` · utlånad till ${esc(r.loaned_to)} nu` : ""}</div></div>
+      <button class="btn small primary" data-lend="${r.id}">Låna ut</button><button class="btn small" data-deny="${r.id}">Avböj</button></div>`).join("")
+      || `<p class="muted small">Inga förfrågningar.</p>`}`);
+  $("#sh-copy") && ($("#sh-copy").onclick = () => copyText(link));
+  const set = async (enable) => { await api("/api/share", { method: "PUT", json: { enable } }); refresh(); };
+  $("#sh-on") && ($("#sh-on").onclick = () => set(true));
+  $("#sh-new") && ($("#sh-new").onclick = () => confirm("Skapa en ny länk? Den gamla slutar fungera.") && set(true));
+  $("#sh-off") && ($("#sh-off").onclick = () => set(false));
+  const handle = async (id, lend) => {
+    await api(`/api/loan-requests/${id}`, { method: "POST", json: { lend, due_date: lend ? ymd(new Date(Date.now() + 30 * 864e5)) : null } });
+    toast(lend ? "Utlånad – åter om 30 dagar" : "Avböjd"); refresh(); load();
+  };
+  $$("[data-lend]").forEach((b) => (b.onclick = () => handle(b.dataset.lend, true)));
+  $$("[data-deny]").forEach((b) => (b.onclick = () => handle(b.dataset.deny, false)));
+}
+
+// ---------- Import av tittarhistorik ----------
+
+function viewHistoryImport() {
+  openSheet(`<h2>Tittarhistorik</h2>
+    <p class="muted">Hämta in när du sett filmerna. Bara filmer som finns i samlingen räknas.</p>
+    <div class="choice"><b>Letterboxd</b><span>letterboxd.com → Settings → Import &amp; Export → <i>Export your data</i>.
+      Packa upp zip-filen och välj <code>diary.csv</code> (eller <code>watched.csv</code>).</span></div>
+    <div class="choice"><b>Trakt</b><span>Exportera din historik som JSON (t.ex. med en exporttjänst för Trakt) och välj filen.</span></div>
+    <input type="file" id="hi-file" accept=".csv,.json,text/csv,application/json">
+    <button class="btn primary" id="hi-go">Importera</button>
+    <div id="hi-res"></div>`);
+  $("#hi-go").onclick = async () => {
+    const f = $("#hi-file").files[0];
+    if (!f) return;
+    const fd = new FormData(); fd.append("file", f);
+    $("#hi-res").innerHTML = `<p class="muted">Läser…</p>`;
+    try {
+      const r = await api("/api/import/history", { method: "POST", body: fd });
+      $("#hi-res").innerHTML = `<div class="notice ok"><b>${esc(r.source)}:</b> ${r.matched} titlar hittade i samlingen, ${r.views_added} nya visningar.
+        ${r.not_owned ? `<br><span class="muted small">${r.not_owned} finns inte i samlingen, t.ex. ${esc(r.examples.slice(0, 5).join(", "))}.</span>` : ""}</div>`;
+      load();
+    } catch (e) { $("#hi-res").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
+  };
+}
+
 // ---------- Start ----------
 
 let qTimer;
@@ -2127,6 +2764,9 @@ if (savedTab !== "wish" && $(`#tabs [data-tab="${savedTab}"]`)) {
   $("#tabs .on").classList.remove("on");
   $(`#tabs [data-tab="${savedTab}"]`).classList.add("on");
 }
+
+// Offline-läget (kräver HTTPS eller localhost – annars stöds det inte av webbläsaren)
+if ("serviceWorker" in navigator && window.isSecureContext) navigator.serviceWorker.register("/sw.js").catch(() => {});
 
 applyTheme();
 loadLibs().then(load).catch((e) => toast("Kunde inte ladda samlingen: " + esc(e.message), "bad"));

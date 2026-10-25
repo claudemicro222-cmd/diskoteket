@@ -30,7 +30,7 @@ def local_path(path: str) -> str | None:
 
 def is_tmdb(path: str) -> bool:
     """Egna omslag och musikomslag finns bara lokalt – allt annat kommer från TMDB."""
-    return not (path or "").lstrip("/").startswith(("custom-", "music-"))
+    return not (path or "").lstrip("/").startswith(("custom-", "music-", "place-"))
 
 
 def remote_url(path: str) -> str:

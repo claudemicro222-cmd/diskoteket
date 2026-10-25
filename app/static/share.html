@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0b0d12">
+  <meta name="robots" content="noindex">
+  <link rel="icon" href="/static/icon.svg">
+  <title>Diskoteket</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <style>
+    .share-head { position: sticky; top: 0; z-index: 5; background: var(--glass); -webkit-backdrop-filter: blur(16px); backdrop-filter: blur(16px);
+      padding: calc(env(safe-area-inset-top) + 12px) 16px 10px; border-bottom: 1px solid var(--line); }
+    .share-head .brand { flex: none; }
+    .share-intro { color: var(--muted); font-size: .88rem; margin: 6px 0 0; }
+  </style>
+</head>
+<body>
+  <!-- Vänsidan: läsvy av samlingen via en hemlig länk. Inget här kan ändra något. -->
+  <div class="share-head">
+    <div class="brand"><img src="/static/icon.svg" alt=""><span class="logo">Disk<span class="logo-o" aria-hidden="true"></span><span class="sr">o</span>teket</span></div>
+    <p class="share-intro">Bläddra i samlingen och be om att få låna något.</p>
+    <div class="search-box"><input id="q" type="search" placeholder="Sök titel eller artist…" autocomplete="off"></div>
+    <nav id="tabs">
+      <button data-k="video" class="on">Film & serier</button>
+      <button data-k="music">Musik</button>
+      <button data-k="wish">Önskelista</button>
+    </nav>
+  </div>
+  <div id="count" class="muted small"></div>
+  <main id="grid" class="grid-m"></main>
+  <p id="empty" class="muted center" hidden>Inget här.</p>
+
+  <div id="toast" hidden></div>
+  <div id="sheet-bg" hidden></div>
+  <section id="sheet" hidden>
+    <button class="icon close" id="sheet-close" aria-label="Stäng">✕</button>
+    <div id="sheet-body"></div>
+  </section>
+
+  <script>
+    "use strict";
+    const token = location.pathname.split("/").pop();
+    const $ = (s) => document.querySelector(s);
+    const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+    const VARIOUS = ["various", "various artists", "va"];
+    const artist = (a) => (a && VARIOUS.includes(a.toLowerCase()) ? "Blandade artister" : a || "");
+    let kind = "video", items = [], timer;
+
+    const poster = (it, cls = "") => it.poster_path ? `<img class="poster ${cls}" loading="lazy" src="/poster${esc(it.poster_path)}" alt="">`
+      : `<div class="poster none ${cls}"><span>${esc(it.title)}</span></div>`;
+
+    async function load() {
+      const p = new URLSearchParams({ kind: kind === "wish" ? "" : kind, wish: kind === "wish" ? "1" : "", q: $("#q").value.trim() });
+      const r = await fetch(`/api/share/${token}/items?${p}`);
+      if (!r.ok) { document.body.innerHTML = `<p class="center muted">Länken fungerar inte längre.</p>`; return; }
+      items = (await r.json()).items;
+      $("#grid").className = "grid-m" + (kind === "music" ? " music-grid" : "");
+      $("#grid").innerHTML = items.map((it, i) => `<div class="card ${it.kind === "music" ? "music" : ""}" data-i="${i}"><div class="pw">
+        ${poster(it, it.kind === "music" ? "square" : "")}${it.loaned ? `<span class="badge tr warn">Utlånad</span>` : ""}</div>
+        <div class="t">${esc(it.title)}</div><div class="s">${it.kind === "music" ? esc(artist(it.artist)) : it.year || ""}</div></div>`).join("");
+      document.querySelectorAll("#grid .card").forEach((el) => (el.onclick = () => open(items[el.dataset.i])));
+      $("#count").textContent = `${items.length} ${kind === "music" ? "album" : "titlar"}`;
+      $("#empty").hidden = items.length > 0;
+    }
+
+    function open(it) {
+      const wish = kind === "wish";
+      $("#sheet-body").innerHTML = `<h2>${esc(it.title)}</h2>
+        <div class="detail">${poster(it, it.kind === "music" ? "square" : "")}<div class="facts">
+          ${it.kind === "music" ? `<div><b>${esc(artist(it.artist))}</b></div>` : ""}
+          <div>${[it.year, it.format, it.runtime && `${it.runtime} min`].filter(Boolean).map(esc).join(" · ")}</div>
+          ${it.genres ? `<div class="muted">${esc(it.genres.replaceAll(" | ", ", "))}</div>` : ""}
+          ${it.director ? `<div class="muted">Regi: ${esc(it.director.replaceAll(" | ", ", "))}</div>` : ""}</div></div>
+        ${it.plot ? `<p class="plot">${esc(it.plot)}</p>` : ""}
+        ${wish ? `<div class="notice star">★ Står på önskelistan – en present kanske?</div>`
+          : it.loaned ? `<div class="notice warn">Utlånad just nu – du kan ändå be om att få låna den sedan.</div>` : ""}
+        ${wish ? "" : `<h3>Be om att få låna</h3><div class="form">
+          <label>Ditt namn<input id="r-name" type="text" autocomplete="name" value="${esc(localStorage.getItem("shareName") || "")}"></label>
+          <label>Meddelande (valfritt)<input id="r-msg" type="text" placeholder="T.ex. till helgen?"></label></div>
+          <button class="btn primary" id="r-send">Skicka förfrågan</button><div id="r-res"></div>`}`;
+      $("#sheet").hidden = $("#sheet-bg").hidden = false;
+      $("#r-send") && ($("#r-send").onclick = async () => {
+        const name = $("#r-name").value.trim();
+        if (!name) return $("#r-name").focus();
+        try { localStorage.setItem("shareName", name); } catch (e) { /* privat läge */ }
+        const r = await fetch(`/api/share/${token}/request`, { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ item_id: it.id, name, message: $("#r-msg").value }) });
+        $("#r-res").innerHTML = r.ok ? `<div class="notice ok">Skickat! Ägaren ser din förfrågan i appen.</div>`
+          : `<div class="notice bad">Det gick inte att skicka just nu.</div>`;
+        if (r.ok) $("#r-send").disabled = true;
+      });
+    }
+
+    const close = () => ($("#sheet").hidden = $("#sheet-bg").hidden = true);
+    $("#sheet-close").onclick = close;
+    $("#sheet-bg").onclick = close;
+    document.addEventListener("keydown", (e) => e.key === "Escape" && close());
+    $("#q").oninput = () => { clearTimeout(timer); timer = setTimeout(load, 250); };
+    $("#tabs").onclick = (e) => {
+      if (e.target.tagName !== "BUTTON") return;
+      document.querySelector("#tabs .on").classList.remove("on");
+      e.target.classList.add("on");
+      kind = e.target.dataset.k;
+      load();
+    };
+    load();
+  </script>
+</body>
+</html>

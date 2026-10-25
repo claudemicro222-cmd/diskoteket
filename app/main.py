@@ -11,14 +11,15 @@ from starlette.applications import Starlette
 from starlette.exceptions import HTTPException
 from starlette.middleware import Middleware
 from starlette.requests import Request
-from starlette.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from starlette.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import auth, barcodes, clz_import, covers, db, enrich, mediaservers, music, posters, repo, settings, tmdb
+from . import (auth, barcodes, clz_import, covers, db, enrich, history, mediaservers, music, posters, repo, settings,
+               sharing, tmdb, trash)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "4.0"
+VERSION = "4.1"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 
@@ -118,7 +119,7 @@ async def items_list(request):
         format=p.get("format", ""), genre=p.get("genre", ""), location=p.get("location", ""),
         watched=p.get("watched", ""), digital=p.get("digital", ""), sort=p.get("sort", "title"),
         missing_poster=qbool(request, "missing_poster"), collection_id=int(coll) if coll.isdigit() else None,
-        field=p.get("field", "title")))
+        field=p.get("field", "title"), tag=p.get("tag", "")))
 
 
 async def facets(request):
@@ -133,7 +134,7 @@ def clean_changes(changes: dict) -> dict:
     for k in ("year", "season", "library_id", "runtime", "tracks", "nr_discs"):
         if k in changes:
             changes[k] = int(changes[k]) if str(changes[k] or "").strip().isdigit() else None
-    for k in ("my_rating", "purchase_price"):
+    for k in ("my_rating", "purchase_price", "sell_price", "wish_price"):
         if k in changes:
             try:
                 changes[k] = float(str(changes[k]).replace(",", ".")) if changes[k] not in (None, "") else None
@@ -141,6 +142,9 @@ def clean_changes(changes: dict) -> dict:
                 changes[k] = None
     if "watched" in changes:
         changes["watched"] = 1 if changes["watched"] in (1, True, "1", "true") else 0
+    if "tags" in changes:
+        tags = changes["tags"]
+        changes["tags"] = repo.join_tags(tags if isinstance(tags, list) else str(tags or "").split("|"))
     return {k: (v.strip() or None) if isinstance(v, str) else v for k, v in changes.items()}
 
 
@@ -150,12 +154,292 @@ async def item_patch(request):
     changes = clean_changes(await body(request))
     if "library_id" in changes and not repo.library(changes["library_id"] or 0):
         raise HTTPException(400, "Okänd samling")
+    if changes.get("watched") == 1 and not item_or_404(item_id)["watched"]:
+        history.add_view(item_id)  # "Markera som sedd" hamnar i tittarhistoriken med dagens datum
     return JSONResponse(repo.update(item_id, changes))
 
 
 async def item_delete(request):
+    """Till papperskorgen – går att ångra i 30 dagar."""
+    trash.delete([request.path_params["item_id"]])
+    return JSONResponse({"ok": True})
+
+
+async def items_bulk(request):
+    b = await body(request)
+    ids = [int(i) for i in b.get("ids") or [] if str(i).isdigit()]
+    if not ids:
+        raise HTTPException(400, "Inga titlar valda")
+    if b.get("delete"):
+        return JSONResponse({"deleted": trash.delete(ids)})
+    changes = clean_changes(dict(b.get("changes") or {}))
+    if "library_id" in changes and not repo.library(changes["library_id"] or 0):
+        raise HTTPException(400, "Okänd samling")
+    n = repo.bulk_update(ids, changes, b.get("add_tags") or [], b.get("remove_tags") or [])
+    return JSONResponse({"updated": n})
+
+
+# ---------- Papperskorg ----------
+
+async def trash_list(request):
+    return JSONResponse(trash.list_trash())
+
+
+async def trash_restore(request):
+    if not trash.restore(request.path_params["item_id"]):
+        raise HTTPException(404, "Finns inte i papperskorgen")
+    return JSONResponse({"ok": True})
+
+
+async def trash_empty(request):
+    return JSONResponse({"deleted": trash.purge(everything=True)})
+
+
+# ---------- Tittarhistorik ----------
+
+async def item_views(request):
+    item_id = request.path_params["item_id"]
+    item_or_404(item_id)
+    if request.method == "POST":
+        day = (await body(request)).get("date") or None
+        if day and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+            raise HTTPException(400, "Ogiltigt datum")
+        return JSONResponse(history.add_view(item_id, day))
+    return JSONResponse(history.views_for(item_id))
+
+
+async def view_delete(request):
+    if history.remove_view(request.path_params["view_id"]) is None:
+        raise HTTPException(404, "Finns inte")
+    return JSONResponse({"ok": True})
+
+
+async def import_history(request):
+    form = await request.form()
+    upload = form.get("file")
+    if not upload or not hasattr(upload, "read"):
+        raise HTTPException(400, "Ingen fil vald")
+    raw = await upload.read()
+    try:
+        if (upload.filename or "").lower().endswith(".json") or raw.lstrip()[:1] in (b"[", b"{"):
+            return JSONResponse({"source": "Trakt", **history.import_trakt(raw)})
+        return JSONResponse({"source": "Letterboxd", **history.import_letterboxd(raw)})
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+async def year_review(request):
+    years = history.years(lib_of(request))
+    y = q(request, "year")
+    year = int(y) if y.isdigit() else (years[0] if years else date.today().year)
+    return JSONResponse({"years": years, **history.year_review(year, lib_of(request))})
+
+
+async def growth(request):
+    return JSONResponse(history.growth(lib_of(request)))
+
+
+# ---------- Taggar och platser ----------
+
+async def tags_list(request):
+    return JSONResponse(repo.all_tags())
+
+
+async def locations_list(request):
+    return JSONResponse(repo.locations(lib_of(request)))
+
+
+async def location_save(request):
+    b = await body(request)
+    name = (b.get("name") or "").strip()
+    if not name:
+        raise HTTPException(400, "Ange en plats")
+    new = repo.save_location(name, description=b.get("description"), new_name=b.get("new_name"))
+    return JSONResponse({"name": new, "locations": repo.locations()})
+
+
+async def location_photo(request):
+    """Foto på hyllan, sparas bland omslagen som place-<namn>.jpg."""
+    form = await request.form()
+    name = (form.get("name") or "").strip()
+    upload = form.get("file")
+    if not name or not upload or not hasattr(upload, "read"):
+        raise HTTPException(400, "Välj plats och bild")
+    try:
+        jpeg = await asyncio.to_thread(covers.to_jpeg, await upload.read())
+    except covers.CoverError as e:
+        raise HTTPException(400, str(e))
+    slug = re.sub(r"[^a-z0-9]+", "-", covers.norm(name)).strip("-")[:40] or "plats"
+    fname = f"place-{slug}-{int(time.time())}.jpg"
+    os.makedirs(posters.POSTER_DIR, exist_ok=True)
+    with open(os.path.join(posters.POSTER_DIR, fname), "wb") as f:
+        f.write(jpeg)
+    old = next((l["photo"] for l in repo.locations() if l["name"] == name), None)
+    repo.save_location(name, photo="/" + fname)
+    if old and old.lstrip("/").startswith("place-"):
+        try:
+            os.remove(os.path.join(posters.POSTER_DIR, old.lstrip("/")))
+        except OSError:
+            pass
+    return JSONResponse({"photo": "/" + fname})
+
+
+# ---------- TMDB: trailer, streaming, liknande, personer, säsonger ----------
+
+def _tmdb_item(request):
+    need_tmdb()
+    it = item_or_404(request.path_params["item_id"])
+    if not it.get("tmdb_id") or it["kind"] == "music":
+        raise HTTPException(404, "Titeln är inte kopplad till TMDB")
+    return it
+
+
+def _owned_map(lib=None):
+    """(kind, tmdb_id) -> ägda/önskade poster, för att markera vad man redan har."""
+    s, a = repo._lib(lib)
+    out = {}
     with db.connect() as con:
-        con.execute("DELETE FROM items WHERE id=?", (request.path_params["item_id"],))
+        for r in con.execute(f"SELECT id, kind, tmdb_id, title, format, poster_path, collection_status FROM items "
+                             f"WHERE tmdb_id IS NOT NULL AND kind != 'music'{s}", a):
+            out.setdefault((r["kind"], r["tmdb_id"]), []).append(dict(r))
+    return out
+
+
+def _mark(cards, owned):
+    for c in cards:
+        mine = owned.get((c["type"], c["tmdb_id"]), [])
+        c["owned"] = [m for m in mine if "wish" not in (m["collection_status"] or "").lower()]
+        c["wished"] = any("wish" in (m["collection_status"] or "").lower() for m in mine)
+    return cards
+
+
+async def item_trailer(request):
+    it = _tmdb_item(request)
+    t = await tmdb.trailer(it["tmdb_id"], it["kind"])
+    if not t:
+        raise HTTPException(404, "Ingen trailer hittades")
+    return JSONResponse(t)
+
+
+async def item_providers(request):
+    it = _tmdb_item(request)
+    return JSONResponse(await tmdb.watch_providers(it["tmdb_id"], it["kind"]))
+
+
+async def item_similar(request):
+    it = _tmdb_item(request)
+    cards = _mark(await tmdb.recommendations(it["tmdb_id"], it["kind"]), _owned_map(lib_of(request)))
+    return JSONResponse({"mine": [c for c in cards if c["owned"]], "other": [c for c in cards if not c["owned"]]})
+
+
+async def person(request):
+    need_tmdb()
+    name = q(request, "name").strip()
+    if not name:
+        raise HTTPException(400, "Ange ett namn")
+    p = await tmdb.person(name)
+    if not p:
+        raise HTTPException(404, "Hittade ingen med det namnet på TMDB")
+    _mark(p["works"], _owned_map(lib_of(request)))
+    return JSONResponse(p)
+
+
+async def series_seasons(request):
+    """Vilka säsonger finns, och vilka har man (i vald samling)?"""
+    need_tmdb()
+    tv_id = request.path_params["tmdb_id"]
+    seasons = await tmdb.tv_seasons(tv_id)
+    s, a = repo._lib(lib_of(request))
+    with db.connect() as con:
+        mine = [dict(r) for r in con.execute(
+            f"SELECT id, season, format, collection_status FROM items WHERE kind='tv' AND tmdb_id=?{s}", [tv_id] + a)]
+    for x in seasons:
+        have = [m for m in mine if m["season"] == x["season"]]
+        x["owned"] = [m for m in have if "wish" not in (m["collection_status"] or "").lower()]
+        x["wished"] = any("wish" in (m["collection_status"] or "").lower() for m in have)
+    return JSONResponse({"seasons": seasons, "whole_series": [m for m in mine if not m["season"]]})
+
+
+async def releases_check(request):
+    need_tmdb()
+    background(check_releases(force=True))
+    return JSONResponse({"ok": True})
+
+
+async def check_releases(force=False):
+    """Släppbevakning: när kommer önskade filmer ut på skiva? Kollas en gång i veckan per film."""
+    if not tmdb.enabled():
+        return
+    with db.connect() as con:
+        todo = [dict(r) for r in con.execute(
+            f"SELECT id, tmdb_id FROM items WHERE kind='movie' AND tmdb_id IS NOT NULL AND {repo.WISH}"
+            + ("" if force else " AND (release_checked IS NULL OR release_checked < date('now', '-7 days'))"))]
+    for it in todo:
+        try:
+            d = await tmdb.physical_release(it["tmdb_id"])
+        except Exception:
+            continue
+        with db.connect() as con:
+            con.execute("UPDATE items SET release_physical=?, release_checked=date('now') WHERE id=?", (d, it["id"]))
+
+
+# ---------- Vänsidan ----------
+
+async def share_get(request):
+    t = sharing.token()
+    return JSONResponse({"enabled": bool(t), "token": t, "requests": sharing.requests()})
+
+
+async def share_set(request):
+    b = await body(request)
+    if b.get("enable"):
+        sharing.enable()
+    else:
+        sharing.disable()
+    return await share_get(request)
+
+
+def _share_or_404(request):
+    if not sharing.valid(request.path_params["token"]):
+        raise HTTPException(404, "Länken fungerar inte längre")
+
+
+async def share_page(request):
+    _share_or_404(request)
+    return HTMLResponse(_with_version("share.html"), headers={"Cache-Control": "no-cache"})
+
+
+async def share_items(request):
+    _share_or_404(request)
+    return JSONResponse({"items": sharing.items(q(request, "kind", "video"), q(request, "q"), qbool(request, "wish")),
+                         "libraries": [{"id": l["id"], "name": l["name"]} for l in repo.libraries()]})
+
+
+async def share_item(request):
+    _share_or_404(request)
+    it = sharing.item(request.path_params["item_id"])
+    if not it:
+        raise HTTPException(404, "Finns inte")
+    return JSONResponse(it)
+
+
+async def share_request(request):
+    _share_or_404(request)
+    b = await body(request)
+    if not sharing.request_loan(int(b.get("item_id") or 0), b.get("name", ""), b.get("message", "")):
+        raise HTTPException(400, "Skriv ditt namn")
+    return JSONResponse({"ok": True})
+
+
+async def loan_requests(request):
+    return JSONResponse(sharing.requests(include_handled=qbool(request, "all")))
+
+
+async def loan_request_handle(request):
+    b = await body(request)
+    r = sharing.handle(request.path_params["req_id"], bool(b.get("lend")), b.get("due_date") or None)
+    if not r:
+        raise HTTPException(404, "Finns inte")
     return JSONResponse({"ok": True})
 
 
@@ -421,6 +705,7 @@ async def status(request):
     return JSONResponse({
         "version": VERSION, "tmdb": tmdb.enabled(), "counts": counts, "enrich": enrich.state, "music": music.state,
         "music_lookup": music.mb_enabled() or music.discogs_enabled(), "auth": auth.enabled(),
+        "share": bool(sharing.token()), "loan_requests": len(sharing.requests()), "trash": len(trash.list_trash()),
         "posters": {**posters.state, **posters.disk_usage(), "local": settings.get_bool("local_posters")},
         "digital": {"configured": mediaservers.configured(), "counts": digital_count, **digital_state},
         "backups": repo.list_backups()[:8], "backup_hours": settings.get_float("backup_hours"),
@@ -582,7 +867,9 @@ async def health(request):
     return JSONResponse({"ok": True, "version": VERSION})
 
 
-PUBLIC = ("/api/login", "/api/health", "/static/", "/manifest.webmanifest", "/poster/", "/favicon")
+# Vänsidan (/share/<hemlig länk>) är öppen – länken själv är nyckeln, och den visar bara det vänner får se
+PUBLIC = ("/api/login", "/api/health", "/static/", "/manifest.webmanifest", "/poster/", "/favicon", "/sw.js",
+          "/share/", "/api/share/")
 KEY_PATHS = ("/api/ha",)  # det API-nyckeln (Home Assistant) får läsa
 
 
@@ -605,7 +892,7 @@ class AuthMiddleware:
         if path.startswith("/api/"):
             response = JSONResponse({"detail": "Du behöver logga in", "login": True}, status_code=401)
         else:
-            response = FileResponse(os.path.join(STATIC, "login.html"), headers={"Cache-Control": "no-cache"})
+            response = HTMLResponse(_with_version("login.html"), headers={"Cache-Control": "no-cache"})
         await response(scope, receive, send)
 
 
@@ -664,7 +951,7 @@ async def poster(request):
 
 async def housekeeping():
     """Körs i bakgrunden: säkerhetskopia och synk mot Plex/Jellyfin med jämna mellanrum."""
-    last_sync = 0.0
+    last_sync = last_daily = 0.0
     await asyncio.sleep(5)
     while True:
         try:
@@ -678,6 +965,10 @@ async def housekeeping():
             if mediaservers.configured() and sync_hours > 0 and now - last_sync > sync_hours * 3600:
                 digital_state.update(result=await mediaservers.sync(), last=date.today().isoformat())
                 last_sync = now
+            if now - last_daily > 24 * 3600:
+                trash.purge()  # papperskorgen töms på det som är äldre än 30 dagar
+                await check_releases()
+                last_daily = now
         except Exception as e:  # ett fel här får aldrig stoppa appen
             print("Bakgrundsjobb:", e)
         await asyncio.sleep(600)
@@ -702,18 +993,63 @@ async def server_error(request, exc: Exception):
     return JSONResponse({"detail": f"Serverfel: {exc}"}, status_code=500)
 
 
+def _with_version(name):
+    """Sidan med ?v=<ändringstid> på app.js och style.css, så att webbläsaren alltid hämtar
+    den nya koden efter en uppdatering i stället för en gammal sparad kopia."""
+    with open(os.path.join(STATIC, name), encoding="utf-8") as f:
+        html = f.read()
+    for asset in ("app.js", "style.css"):
+        v = int(os.path.getmtime(os.path.join(STATIC, asset)))
+        html = html.replace(f"/static/{asset}\"", f"/static/{asset}?v={v}\"")
+    return html
+
+
 async def index(request):
-    return FileResponse(os.path.join(STATIC, "index.html"), headers={"Cache-Control": "no-cache"})
+    return HTMLResponse(_with_version("index.html"), headers={"Cache-Control": "no-cache"})
 
 
 async def manifest(request):
     return FileResponse(os.path.join(STATIC, "manifest.webmanifest"), media_type="application/manifest+json")
 
 
+async def service_worker(request):
+    """Offline-läget. Måste ligga i roten för att gälla hela appen."""
+    return FileResponse(os.path.join(STATIC, "sw.js"), media_type="text/javascript",
+                        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"})
+
+
 routes = [
     Route("/", index),
     Route("/manifest.webmanifest", manifest),
+    Route("/sw.js", service_worker),
     Route("/poster/{name}", poster),
+    Route("/share/{token}", share_page),
+    Route("/api/share/{token}/items", share_items),
+    Route("/api/share/{token}/items/{item_id:int}", share_item),
+    Route("/api/share/{token}/request", share_request, methods=["POST"]),
+    Route("/api/share", share_get),
+    Route("/api/share", share_set, methods=["PUT"]),
+    Route("/api/loan-requests", loan_requests),
+    Route("/api/loan-requests/{req_id:int}", loan_request_handle, methods=["POST"]),
+    Route("/api/items/bulk", items_bulk, methods=["POST"]),
+    Route("/api/items/{item_id:int}/views", item_views, methods=["GET", "POST"]),
+    Route("/api/views/{view_id:int}", view_delete, methods=["DELETE"]),
+    Route("/api/items/{item_id:int}/trailer", item_trailer),
+    Route("/api/items/{item_id:int}/providers", item_providers),
+    Route("/api/items/{item_id:int}/similar", item_similar),
+    Route("/api/person", person),
+    Route("/api/series/{tmdb_id:int}/seasons", series_seasons),
+    Route("/api/releases/check", releases_check, methods=["POST"]),
+    Route("/api/trash", trash_list),
+    Route("/api/trash", trash_empty, methods=["DELETE"]),
+    Route("/api/trash/{item_id:int}/restore", trash_restore, methods=["POST"]),
+    Route("/api/import/history", import_history, methods=["POST"]),
+    Route("/api/year", year_review),
+    Route("/api/growth", growth),
+    Route("/api/tags", tags_list),
+    Route("/api/locations", locations_list),
+    Route("/api/locations", location_save, methods=["PUT"]),
+    Route("/api/locations/photo", location_photo, methods=["POST"]),
     Route("/api/libraries", libraries_list),
     Route("/api/libraries", library_create, methods=["POST"]),
     Route("/api/libraries/{lib_id:int}", library_rename, methods=["PATCH"]),

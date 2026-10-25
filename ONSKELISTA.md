@@ -1,13 +1,22 @@
 # Önskelista och status
 
-Senast uppdaterad: 2026-10-25. Version i drift: **3.1** (Unraid, `ghcr.io/claudemicro222-cmd/diskoteket:latest`).
-Version **4.0** är byggd och testad lokalt men **inte pushad** än – väntar på ägarens klartecken.
+Senast uppdaterad: 2026-10-25. Version **4.0** är pushad och publicerad (`:latest` och `:4.0`).
+Arbetssätt från nu: ändringar testas lokalt (testserver på port 8765 med kopia av samlingen) och pushas
+först när ägaren säger att appen är klar.
 
 ## Önskemål till nästa version (bygg först när ägaren säger till)
 
-_Inga just nu._
+_Inga just nu._ Version **4.1** (alla 21 punkter från 2026-10-25) är byggd och ligger lokalt för test –
+**inte pushad**. Testa på `http://localhost:8765`.
 
 ## Att testa / följa upp
+
+- **4.1 – TMDB-delarna** (trailer, var man kan streama, liknande filmer, skådespelarsida, saknade säsonger,
+  släppbevakning) är bara testade mot påhittade TMDB-svar – testkopian saknar TMDB-nyckel. Prova på riktigt med nyckel.
+- **4.1 – Prisbevakning:** det finns länkar till Prisjakt/CDON/Tradera och ett maxpris, men ingen automatisk
+  avisering när något blir billigt – Prisjakt och CDON har inget öppet API att fråga.
+- **4.1 – Offline-läget** fungerar bara över HTTPS (eller localhost) – webbläsare tillåter det inte på vanlig http://.
+- **4.1 – Vänsidan** når vänner utanför hemmet bara om appen går att nå utifrån (reverse proxy/Tailscale).
 
 - **4.0 på riktigt:** efter uppdatering på Unraid – kontrollera att musikfliken fylls (låtlistor och omslag hämtas
   i bakgrunden, några sekunder per album) och att filmerna är orörda.
@@ -28,12 +37,26 @@ _Inga just nu._
 - ”Spela i Plex/Jellyfin”-knapp.
 - Plex/Jellyfin för musik (vilka album som finns digitalt).
 - Inloggning via reverse proxyns användare (t.ex. Authelia) i stället för eget lösenord.
+- Fler förslag från Claude 2026-10-25 (inte beställda):
+  - Utlåning med påminnelse: avisering i Home Assistant/mobilen när ett lån blir försenat, och historik över vem som lånat vad.
+  - Filmkväll-läge: flera personer röstar fram kvällens film (tinder-stil på mobilerna) bland osedda titlar.
+  - Åldersgräns/barnläge: barnprofil som bara visar barnvänliga titlar (TMDB-certifiering).
+  - Musik: favoritlåtar och ”spela i Plex/Jellyfin/Spotify”-länk per album.
+  - Säkerhetskopia till annan plats: automatisk kopia till t.ex. en annan Unraid-share eller molnet.
+  - Snabbsök med röst: säg titeln i mobilen i stället för att skriva.
+  - Kalender med visningar: ”Idag för 10 år sedan såg du…”, och filmer som fyller jämnt i år.
+  - Dela ett kort: snygg bild av en film/ett album (omslag + betyg) att skicka till någon.
 
 ## Struket av ägaren
 
 - Färdiga Home Assistant-automationer (2026-10-25: ”vi skiter i det”).
 
 ## Gjort
+
+- 4.1 (lokalt, inte pushad): bokstavslist (som Radarr), saknade säsonger, egna taggar, välj flera/massredigering,
+  papperskorg, vänsida med låneförfrågningar, uppgraderingslista, tittarhistorik + import från Letterboxd/Trakt,
+  offline-läge, trailer, skådespelarsida, liknande filmer, släppbevakning, utlåning med streckkod, hyllkarta,
+  årsöversikt, var man kan streama, prislänkar + maxpris, samlingens utveckling, skick, säljlista med annonstext.
 
 - 4.0: återställ säkerhetskopia i appen (egen kopia eller uppladdad fil), musik som egen flik (CLZ Music-import,
   MusicBrainz/Discogs, låtlistor, skivomslag, skanning, ”Fel album?”), Home Assistant-integration via HACS med kort i

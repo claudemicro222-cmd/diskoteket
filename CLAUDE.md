@@ -66,6 +66,13 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build   #
   (huvudsensorn bär hela sammanfattningen som attribut) och Lovelace-kortet `frontend/diskoteket-card.js` (vanilla JS,
   laddas automatiskt via `add_extra_js_url`). Omslag i kortet går via HA-vyn `/api/diskoteket/<entry>/poster/<namn>`
   med signerade adresser. Ändrar du `/api/ha` – behåll gamla nycklar, äldre REST-sensorer använder dem.
+- **4.1-moduler:** `trash.py` (papperskorg: hela posten som JSON i tabellen `trash`, töms efter 30 dagar i
+  `housekeeping`), `history.py` (tabellen `views`, import från Letterboxd/Trakt, årsöversikt, utveckling),
+  `sharing.py` (vänsidan `/share/<token>` + `loan_requests`; token i `settings`, öppen i `AuthMiddleware` via `PUBLIC`
+  och visar bara `PUBLIC_COLS`). Hyllkartan är tabellen `locations` (namn = `items.location`); foton heter `place-…`.
+  Status `For Sale` räknas som ägd (`repo.FOR_SALE`); `upgrade_to`/`wish_price`/`release_physical` hör till önskelistan.
+- **Webbsidans cache:** `index.html`/`login.html`/`share.html` serveras via `_with_version()` som lägger `?v=<ändringstid>`
+  på `app.js` och `style.css`. Offline-läget är `static/sw.js` (serveras på `/sw.js`), nätet först och sparad kopia annars.
 - **Övriga moduler:** `repo.py` (samlingar, listor, sökning, statistik, dubbletter, bara digitalt, export, backup),
   `barcodes.py` (film: inlärda koder → andra samlingar → MyMovies → UPCitemdb → EAN-DB), `enrich.py`/`tmdb.py` (TMDB),
   `posters.py`/`covers.py` (lokala och egna omslag), `mediaservers.py` (Plex/Jellyfin).

@@ -13,9 +13,11 @@ from . import db, settings
 LIST_COLS = ("id, library_id, kind, title, series_name, season, year, format, poster_path, barcode, watched, "
              "genres, sort_title, location, loaned_to, due_date, collection_status, my_rating, "
              "added_date, runtime, collection_id, collection_name, tmdb_id, imdb_id, enriched, "
-             "artist, label, tracks, purchase_price")
+             "artist, label, tracks, purchase_price, tags, upgrade_to, sell_price, wish_price, condition, "
+             "release_physical")
 
 WISH = "(collection_status LIKE '%wish%')"
+FOR_SALE = "(collection_status = 'For Sale')"
 SOLD = "(collection_status LIKE '%sold%')"
 OWNED = f"(collection_status IS NULL OR NOT ({WISH} OR {SOLD}))"
 DIGITAL = ("(EXISTS (SELECT 1 FROM digital d WHERE (d.imdb_id IS NOT NULL AND d.imdb_id = items.imdb_id) "
@@ -92,7 +94,7 @@ def delete_library(lib_id):
 # ---------- Listor ----------
 
 def list_items(lib=None, q="", kind="", status="owned", format="", genre="", location="", watched="",
-               digital="", sort="title", missing_poster=False, collection_id=None, field="title"):
+               digital="", sort="title", missing_poster=False, collection_id=None, field="title", tag=""):
     sql = f"SELECT {LIST_COLS}, {DIGITAL} AS digital FROM items WHERE 1=1"
     s, args = _lib(lib)
     sql += s
@@ -102,7 +104,14 @@ def list_items(lib=None, q="", kind="", status="owned", format="", genre="", loc
         sql += f" AND {WISH}"
     elif status == "loaned":
         sql += f" AND {OWNED} AND loaned_to IS NOT NULL AND loaned_to != ''"
+    elif status == "upgrade":  # ägda titlar man vill ha i ett bättre format
+        sql += f" AND {OWNED} AND upgrade_to IS NOT NULL AND upgrade_to != ''"
+    elif status == "sale":
+        sql += f" AND {FOR_SALE}"
     sql += _kind(kind)
+    if tag:
+        sql += " AND (' | ' || tags || ' | ') LIKE ?"
+        args.append(f"% | {tag} | %")
     if format:
         sql += " AND format=?"
         args.append(format)
@@ -190,8 +199,26 @@ def facets(lib=None, kind=""):
                 if name.strip():
                     genres[name.strip()] = genres.get(name.strip(), 0) + 1
         has_digital = con.execute("SELECT COUNT(*) FROM digital").fetchone()[0] > 0
+        tags = _count_names(con, f"SELECT tags FROM items WHERE tags IS NOT NULL AND tags != ''{s}", a)
     return {"formats": formats, "locations": locations,
-            "genres": sorted(genres, key=lambda k: -genres[k]), "digital": has_digital}
+            "genres": sorted(genres, key=lambda k: -genres[k]), "digital": has_digital,
+            "tags": sorted(tags, key=lambda k: k.lower())}
+
+
+def all_tags():
+    with db.connect() as con:
+        return sorted(_count_names(con, "SELECT tags FROM items WHERE tags IS NOT NULL AND tags != ''", []),
+                      key=str.lower)
+
+
+def join_tags(tags) -> str | None:
+    """['Jul', ' jul ', 'Barn'] -> 'Barn | Jul' (inga dubbletter, oavsett stora/små bokstäver)."""
+    seen = {}
+    for t in tags:
+        t = re.sub(r"\s+", " ", str(t).replace("|", " ")).strip()
+        if t and t.lower() not in seen:
+            seen[t.lower()] = t
+    return " | ".join(sorted(seen.values(), key=str.lower)) or None
 
 
 def get(item_id):
@@ -212,7 +239,66 @@ EDITABLE = {"title", "year", "format", "edition", "barcode", "location", "notes"
             "purchase_price", "added_date", "tmdb_id", "poster_path", "plot", "imdb_id", "collection_id",
             "collection_name", "library_id", "original_title", "genres", "runtime", "director", "actors",
             "enriched", "coll_checked", "kind",
-            "artist", "label", "cat_no", "tracks", "tracklist", "mbid", "discogs_id", "nr_discs"}
+            "artist", "label", "cat_no", "tracks", "tracklist", "mbid", "discogs_id", "nr_discs",
+            "tags", "upgrade_to", "condition", "condition_notes", "sell_price", "wish_price", "release_physical"}
+
+# Det massredigering får ändra
+BULK = {"location", "format", "library_id", "collection_status", "upgrade_to", "condition", "watched"}
+
+
+def bulk_update(ids: list[int], changes: dict, add_tags=(), remove_tags=()) -> int:
+    """Samma ändring på många titlar. Ändringarna låses precis som när man redigerar en i taget."""
+    changes = {k: v for k, v in changes.items() if k in BULK}
+    remove = {t.lower() for t in remove_tags}
+    n = 0
+    for item_id in ids:
+        cur = get(item_id)
+        if not cur:
+            continue
+        ch = dict(changes)
+        if add_tags or remove_tags:
+            tags = [t for t in (cur.get("tags") or "").split(" | ") if t and t.lower() not in remove]
+            ch["tags"] = join_tags(tags + list(add_tags))
+        if ch:
+            update(item_id, ch, lock=True)
+            n += 1
+    return n
+
+
+# ---------- Hyllkartan ----------
+
+def locations(lib=None):
+    """Alla platser med antal titlar, beskrivning och foto."""
+    s, a = _lib(lib)
+    with db.connect() as con:
+        counts = {r[0]: r[1] for r in con.execute(
+            f"SELECT location, COUNT(*) FROM items WHERE location IS NOT NULL AND location != '' AND {OWNED}{s} "
+            "GROUP BY location", a)}
+        info = {r["name"]: dict(r) for r in con.execute("SELECT * FROM locations")}
+    names = sorted(set(counts) | set(info), key=lambda n: n.lower())
+    return [{"name": n, "count": counts.get(n, 0), "description": (info.get(n) or {}).get("description"),
+             "photo": (info.get(n) or {}).get("photo")} for n in names]
+
+
+def save_location(name, description=None, photo=None, new_name=None):
+    """Spara beskrivning/foto, eller byt namn på platsen (då flyttas alla titlar med)."""
+    with db.connect() as con:
+        con.execute("INSERT INTO locations (name) VALUES (?) ON CONFLICT(name) DO NOTHING", (name,))
+        if description is not None:
+            con.execute("UPDATE locations SET description=? WHERE name=?", (description.strip() or None, name))
+        if photo is not None:
+            con.execute("UPDATE locations SET photo=? WHERE name=?", (photo or None, name))
+        if not (new_name and new_name.strip() and new_name.strip() != name):
+            return name
+        new_name = new_name.strip()
+        ids = [r[0] for r in con.execute("SELECT id FROM items WHERE location=?", (name,))]
+        if con.execute("SELECT 1 FROM locations WHERE name=?", (new_name,)).fetchone():
+            con.execute("DELETE FROM locations WHERE name=?", (name,))
+        else:
+            con.execute("UPDATE locations SET name=? WHERE name=?", (new_name, name))
+    for item_id in ids:  # via update(), så att en ny CLZ-import inte skriver tillbaka det gamla namnet
+        update(item_id, {"location": new_name})
+    return new_name
 
 
 def update(item_id, changes: dict, lock=True, unlock=()):

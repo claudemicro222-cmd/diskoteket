@@ -29,6 +29,19 @@ omslag från TMDB och MusicBrainz, och koppling till Plex/Jellyfin och Home Assi
 - **Home Assistant-integration** (via HACS) med sensorer och ett eget kort där du väljer detaljnivå.
 - **Valfri inloggning** med lösenord.
 - Automatiska säkerhetskopior som går att **återställa direkt i appen**, och **export** till CSV/JSON.
+- **Bokstavslist** längs högerkanten (som i Radarr) – se var du är och hoppa direkt till en bokstav.
+- **Välj flera** och ändra plats, format, samling, status, skick eller taggar på en gång. **Papperskorg** i 30 dagar.
+- **Egna taggar**, t.ex. ”Jul” eller ”Barnvänligt”, att filtrera på.
+- **Filmsidan:** trailer, var filmen går att streama i Sverige (JustWatch), liknande filmer – ur samlingen och att
+  skaffa – och klickbara skådespelare/regissörer som visar allt du har med dem och vad du saknar.
+- **Saknade säsonger** för serier, med ★ Önska.
+- **Önskelistan:** släppbevakning (när filmen kommer på skiva), länkar till Prisjakt/CDON/Tradera och maxpris,
+  plus en uppgraderingslista (t.ex. DVD → 4K).
+- **Tittarhistorik** (när och hur många gånger), med import från Letterboxd och Trakt, och en **årsöversikt**.
+- **Hyllkarta** med foto och beskrivning per plats, **utlåning med streckkod** och **samlingens utveckling** över åren.
+- **Skick och säljlista** med färdig annonstext till Tradera/Blocket.
+- **Visa-sida för vänner** – en hemlig länk där vänner kan bläddra och be om att låna.
+- **Offline-läge**: appen går att bläddra i även när servern inte nås (kräver HTTPS, eller localhost).
 
 ## Installera på Unraid
 
