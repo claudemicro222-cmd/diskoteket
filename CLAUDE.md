@@ -38,7 +38,9 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build   #
   Plex/Jellyfin-synk, `enrich.run()` för TMDB och `music.enrich_all()` för musik – båda fortsätter efter omstart).
   Fel i bakgrundsjobb loggas men får aldrig stoppa appen.
 - **Frontend:** en enda sida, `app/static/app.js` (vanilla JS, ingen bundler) + `style.css` + `index.html` (+ `login.html`).
-  Ändra filerna direkt. Vyerna är funktioner `viewX()` som ritar i ett bottenark (`openSheet`) med bakåtstack (`show`/`back`).
+  Ändra filerna direkt. Enter i ett fält: använd `onEnter(el, fn)` – aldrig `el.onkeydown = (e) => e.key === "Enter" && …`
+  (svaret `false` stoppar alla andra tangenter). Testa skrivande med riktiga tangenttryck, inte bara inklistrad text.
+  Vyerna är funktioner `viewX()` som ritar i ett bottenark (`openSheet`) med bakåtstack (`show`/`back`).
 - **Databas:** SQLite i WAL-läge, `CONFIG_DIR/diskoteket.db`. `db.connect()` är en contextmanager som committar själv.
   Tabellen `items` har egna kolumner för fälten i `db.FIELDS`; allt annat från CLZ sparas som JSON i kolumnen `extra` så inget går förlorat.
 - **Film, serier och musik i samma tabell:** `items.kind` är `movie`, `tv` eller `music`. Fliken "Alla" visar bara film och

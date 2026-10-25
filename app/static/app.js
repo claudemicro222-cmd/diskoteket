@@ -43,6 +43,13 @@ async function api(path, opts = {}) {
   }
   return data;
 }
+// Enter i ett fält kör en funktion. OBS: skriv aldrig `el.onkeydown = (e) => e.key === "Enter" && …` –
+// för alla andra tangenter blir svaret `false`, och då stoppar webbläsaren tangenttrycket (inget går att skriva).
+function onEnter(el, fn) {
+  el.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); fn(); }
+  });
+}
 const patch = (id, json) => api(`/api/items/${id}`, { method: "PATCH", json });
 const libParam = () => `lib=${state.lib === "all" ? "all" : state.lib}`;
 const libName = (id) => state.libs.find((l) => l.id === id)?.name || "";
@@ -1070,7 +1077,7 @@ function viewMusicRematch(it) {
     } catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   };
   $("#mr-go").onclick = run;
-  $("#mr-title").onkeydown = (e) => e.key === "Enter" && run();
+  onEnter($("#mr-title"), run);
   run();
 }
 
@@ -1089,9 +1096,9 @@ async function viewMusicAdd({ query = "", artist = "", barcode = null, candidate
   const last = store.get("lastMusicAdd", { format: "CD", location: "" });
   const keep = store.get("keepAdding", false);
   let head = "";
-  if (barcode && match) {
+  if (match) {
     head = `<div class="best">${netCover(match.cover, "square")}
-      <div class="grow"><div class="muted small">Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}</div>
+      <div class="grow"><div class="muted small">${barcode ? `Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}` : `Vald skiva · ${esc(match.source)}`}</div>
         <h3>${esc(match.title)}</h3>
         <div class="muted">${esc(artistName(match.artist))}${match.year ? ` · ${match.year}` : ""}${match.label ? ` · ${esc(match.label)}` : ""}</div>
         <button class="btn primary" id="b-best">＋ Lägg till</button></div></div>
@@ -1102,7 +1109,7 @@ async function viewMusicAdd({ query = "", artist = "", barcode = null, candidate
       <div><a class="btn small web" href="https://www.discogs.com/search/?q=${encodeURIComponent(barcode)}&type=release" target="_blank" rel="noopener">Sök på Discogs ↗</a></div></div>`;
   }
   openSheet(`
-    <h2>${barcode ? (match ? "Hittad!" : "Ny skiva") : "Lägg till musik"}</h2>
+    <h2>${barcode ? (match ? "Hittad!" : "Ny skiva") : match ? "Lägg till den här?" : "Lägg till musik"}</h2>
     ${addedThisRound ? `<div class="added-count">✓ ${addedThisRound} tillagda ${queue().length && barcode ? `· ${queue().length} kvar i kön` : ""}</div>` : ""}
     ${head}
     <div class="form"><div class="two">
@@ -1137,7 +1144,7 @@ async function viewMusicAdd({ query = "", artist = "", barcode = null, candidate
     try { renderList(await api(`/api/music/search?${new URLSearchParams({ q: $("#ma-title").value, artist: $("#ma-artist").value })}`)); }
     catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   };
-  for (const id of ["#ma-title", "#ma-artist"]) $(id).onkeydown = (e) => e.key === "Enter" && $("#b-ms").onclick();
+  for (const id of ["#ma-title", "#ma-artist"]) onEnter($(id), () => $("#b-ms").onclick());
   if (candidates?.length && (!match || candidates.length > 1)) renderList(match ? candidates.slice(1) : candidates);
   else if (query && !match) $("#b-ms").onclick();
   if (!barcode && !query) $("#ma-title").focus();
@@ -1393,7 +1400,7 @@ function viewRematch(it) {
     } catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   };
   $("#b-rq").onclick = run;
-  $("#rq").onkeydown = (e) => e.key === "Enter" && run();
+  onEnter($("#rq"), run);
   run();
 }
 
@@ -1410,21 +1417,36 @@ let scan = null;        // { stream, timer, controls }
 let scanHandler = null; // vad som händer med en kod
 let lastCode = { code: "", at: 0 };
 
-function scannerHtml(title, extra = "", manualHint = "…eller skriv streckkoden") {
+// Fältet ligger överst (ovanför kameran), så att det syns även när mobilens tangentbord är uppe.
+// top: det som ska stå ovanför fältet (t.ex. film/musik-valet).
+function scannerHtml(title, extra = "", manualHint = "…eller skriv streckkoden", top = "") {
   return `<h2>${title}</h2>
+    ${top}
+    <div class="row scan-input"><input id="manual" type="text" enterkeyhint="search" autocomplete="off" spellcheck="false" placeholder="${manualHint}">
+      <button class="btn primary" id="b-manual">OK</button></div>
+    <div id="manual-msg" class="small" hidden></div>
+    <div id="suggest"></div>
     <div id="video-wrap"><video id="video" playsinline muted></video></div>
     <div id="scan-msg" class="muted small">Rikta kameran mot streckkoden.</div>
-    ${extra}
-    <div class="row"><input id="manual" type="text" enterkeyhint="search" autocomplete="off" placeholder="${manualHint}">
-      <button class="btn primary" id="b-manual">OK</button></div>
-    <div id="manual-msg" class="small" hidden></div>`;
+    ${extra}`;
 }
 
 // Manuell inmatning: siffror = streckkod, text = titelsökning (om vyn tillåter det).
 // Ger alltid ett besked – tidigare hände ingenting vid t.ex. en titel eller för få siffror.
-function manualInput(onText) {
+// Med onSuggest visas förslag (med omslag) medan man skriver.
+function manualInput(onText, onSuggest = null) {
   const msg = (text) => { const m = $("#manual-msg"); m.textContent = text; m.hidden = !text; m.className = "small bad-text"; };
-  $("#manual").oninput = () => msg("");
+  let timer;
+  $("#manual").oninput = () => {
+    msg("");
+    if (!onSuggest) return;
+    clearTimeout(timer);
+    const v = $("#manual").value.trim();
+    const typing = v.length >= 2 && !/^[\d\s-]+$/.test(v);
+    $("#video-wrap").classList.toggle("collapsed", typing); // kameran viker undan när man skriver en titel
+    if (!typing) { $("#suggest").innerHTML = ""; return; }
+    timer = setTimeout(() => onSuggest(v), 350);
+  };
   $("#b-manual").onclick = () => {
     const v = $("#manual").value.trim();
     if (!v) return $("#manual").focus();
@@ -1437,23 +1459,63 @@ function manualInput(onText) {
     if (onText) { stopScan(); return onText(v); }
     msg("Skriv streckkodens siffror.");
   };
-  $("#manual").onkeydown = (e) => e.key === "Enter" && (e.preventDefault(), $("#b-manual").onclick());
+  onEnter($("#manual"), () => $("#b-manual").onclick());
 }
 
-async function startCamera(onCode, onText = null) {
+async function startCamera(onCode, onText = null, onSuggest = null) {
   scanHandler = onCode;
-  manualInput(onText);
-  if (!window.isSecureContext || !navigator.mediaDevices) {
-    $("#scan-msg").innerHTML = "Kameran kräver <b>HTTPS</b> (eller localhost). Skriv in streckkoden – eller titeln – nedan så länge.";
+  manualInput(onText, onSuggest);
+  const noCamera = (html) => {
+    $("#scan-msg").innerHTML = html;
     $("#video-wrap").hidden = true;
-    return;
+    $("#manual").focus();
+  };
+  if (!window.isSecureContext || !navigator.mediaDevices) {
+    return noCamera("Kameran kräver <b>HTTPS</b> (eller localhost). Skriv streckkoden – eller titeln – ovan så länge.");
   }
+  // Starta inget kamerabibliotek på en dator utan kamera – skriv i fältet i stället
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    if (!devices.some((d) => d.kind === "videoinput")) {
+      return noCamera("Ingen kamera hittades på den här enheten. Skriv titel eller streckkod i fältet ovan.");
+    }
+  } catch { /* okänt – försök starta kameran ändå */ }
+  if (!$("#manual")) return; // rutan stängdes medan vi kollade
   try {
     if ("BarcodeDetector" in window && (await BarcodeDetector.getSupportedFormats()).includes("ean_13")) await scanNative();
     else await scanZXing();
   } catch (e) {
-    $("#scan-msg").textContent = "Kunde inte starta kameran: " + e.message;
+    stopScan();
+    noCamera(`Kunde inte starta kameran (${esc(e.message)}). Skriv titel eller streckkod i fältet ovan.`);
   }
+}
+
+// Förslag medan man skriver: träffar med omslag. Tryck på en för att lägga till den.
+async function suggestTitles(text) {
+  const box = $("#suggest");
+  if (!box || scanMode === "loan") return;
+  const music = scanMode === "music";
+  box.innerHTML = `<p class="muted small">Söker…</p>`;
+  let list;
+  try {
+    list = music ? await api(`/api/music/search?q=${encodeURIComponent(text)}`)
+      : await api(`/api/search?q=${encodeURIComponent(text)}&lib=${scanLib()}`);
+  } catch (e) { if (box.isConnected) box.innerHTML = `<p class="small bad-text">${esc(e.message)}</p>`; return; }
+  if (!box.isConnected || $("#manual")?.value.trim() !== text) return; // man har skrivit vidare
+  list = list.slice(0, 8);
+  box.innerHTML = list.length ? `<div class="suggest-list">${list.map((c, i) => `<div class="list-item suggest-item" data-i="${i}">
+      ${music ? netCover(c.cover, "thumb square") : c.poster_path ? `<img class="poster thumb" loading="lazy" src="${TMDB_IMG}w92${esc(c.poster_path)}" alt="">` : `<div class="poster none thumb"></div>`}
+      <div class="grow"><div class="li-title">${esc(c.title)}</div>
+        <div class="muted small">${music ? esc(artistName(c.artist)) + " · " : ""}${c.year || ""}${music ? (c.format ? ` · ${esc(c.format)}` : "") : ` · ${c.type === "tv" ? "Serie" : "Film"}`}</div></div>
+      ${c.owned?.length ? `<span class="flag ok" title="Finns redan i samlingen">✓ Har</span>` : c.wished ? `<span class="star-text">★</span>` : `<span class="plus">＋</span>`}</div>`).join("")}</div>`
+    : `<p class="muted small">Inga träffar på ”${esc(text)}”. Prova en annan stavning.</p>`;
+  $$(".suggest-item", box).forEach((el) => (el.onclick = () => {
+    const c = list[el.dataset.i];
+    stopScan();
+    if (c.owned?.length) return show(viewItem, c.owned[0].id);
+    if (music) show(viewMusicAdd, { query: c.title, artist: c.artist || "", match: c, candidates: [c] });
+    else show(viewAdd, { query: text, match: c });
+  }));
 }
 
 function gotCode(code, manual = false) {
@@ -1516,11 +1578,11 @@ const codeView = () => (scanMode === "music" ? viewMusicCode : viewCode);
 // Vanlig skanning: en kod i taget, eller serieläge där kameran står kvar
 function viewScan() {
   const serial = store.get("serialScan", false);
-  const hint = () => (scanMode === "music" ? "Streckkod eller album" : scanMode === "loan" ? "Streckkod" : "Streckkod eller titel");
-  openSheet(scannerHtml("Skanna streckkod", `
-    <div class="seg-switch" id="scan-mode"><button data-m="video" class="${scanMode === "video" ? "on" : ""}">🎬 Film & serier</button>
+  const hint = () => (scanMode === "music" ? "Streckkod, album eller artist" : scanMode === "loan" ? "Streckkod" : "Streckkod eller titel, t.ex. harry potter");
+  const modes = `<div class="seg-switch" id="scan-mode"><button data-m="video" class="${scanMode === "video" ? "on" : ""}">🎬 Film & serier</button>
       <button data-m="music" class="${scanMode === "music" ? "on" : ""}">🎵 Musik</button>
-      <button data-m="loan" class="${scanMode === "loan" ? "on" : ""}">🤝 Utlåning</button></div>
+      <button data-m="loan" class="${scanMode === "loan" ? "on" : ""}">🤝 Utlåning</button></div>`;
+  openSheet(scannerHtml("Skanna eller sök", `
     <div id="loan-box" ${scanMode === "loan" ? "" : "hidden"}>
       <p class="muted small">Skanna en skiva för att låna ut den – eller skanna en utlånad skiva för att markera den som återlämnad.</p>
       <div class="two form"><label>Lånas ut till<input id="loan-to" type="text" list="l-names" value="${esc(store.get("loanTo", ""))}" placeholder="Namn"></label>
@@ -1529,7 +1591,7 @@ function viewScan() {
     </div>
     <p class="muted small">${scanWhere()}</p>
     <label class="check" id="serial-row" ${scanMode === "loan" ? "hidden" : ""}><input type="checkbox" id="serial" ${serial ? "checked" : ""}> Skanna i serie (kameran står kvar)</label>
-    <div id="queue"></div>`, hint()));
+    <div id="queue"></div>`, hint(), modes));
   $("#serial").onchange = (e) => store.set("serialScan", e.target.checked);
   $("#loan-to").oninput = (e) => store.set("loanTo", e.target.value.trim());
   $("#loan-days").onchange = (e) => store.set("loanDays", +e.target.value);
@@ -1539,6 +1601,8 @@ function viewScan() {
     $("#manual").placeholder = hint();
     $("#loan-box").hidden = scanMode !== "loan";
     $("#serial-row").hidden = scanMode === "loan";
+    $("#suggest").innerHTML = "";
+    $("#manual").dispatchEvent(new Event("input")); // nya förslag för det som redan står i fältet
     renderQueue();
   }));
   renderQueue();
@@ -1566,7 +1630,7 @@ function viewScan() {
       toast(`Ny: ${code} – lagd i kön`);
       resolveQueued(code);
     }
-  }, (text) => show(scanMode === "music" ? viewMusicAdd : viewAdd, { query: text }));
+  }, (text) => show(scanMode === "music" ? viewMusicAdd : viewAdd, { query: text }), suggestTitles);
 }
 
 // Utlåning med streckkod: utlånad skiva -> återlämnad, annars låna ut till namnet i rutan
@@ -1671,10 +1735,10 @@ async function viewAdd({ query = "", barcode = null, candidates = null, productT
   const fmt = match?.format || last.format;
   const webSearch = barcode ? `<a class="btn small web" href="https://www.google.com/search?q=${encodeURIComponent(barcode)}" target="_blank" rel="noopener">Sök streckkoden på nätet ↗</a>` : "";
   let head = "";
-  if (barcode && match) {
+  if (match) {
     head = `<div class="best">
       ${match.poster_path ? `<img class="poster" src="${TMDB_IMG}w185${esc(match.poster_path)}" alt="">` : `<div class="poster none"></div>`}
-      <div class="grow"><div class="muted small">Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}</div>
+      <div class="grow"><div class="muted small">${barcode ? `Streckkod ${esc(barcode)} · hittad via ${esc(match.source)}` : "Vald titel"}</div>
         <h3>${esc(match.title)}</h3>
         <div class="muted">${match.year || ""} · ${match.type === "tv" ? "Serie" : "Film"}${match.original_title && match.original_title !== match.title ? ` · ${esc(match.original_title)}` : ""}</div>
         <button class="btn primary" id="b-best">＋ Lägg till</button></div></div>
@@ -1685,7 +1749,7 @@ async function viewAdd({ query = "", barcode = null, candidates = null, productT
       <div>${webSearch}</div></div>`;
   }
   openSheet(`
-    <h2>${barcode ? (match ? "Hittad!" : "Ny titel") : "Lägg till"}</h2>
+    <h2>${barcode ? (match ? "Hittad!" : "Ny titel") : match ? "Lägg till den här?" : "Lägg till"}</h2>
     ${addedThisRound ? `<div class="added-count">✓ ${addedThisRound} tillagda ${queue().length && barcode ? `· ${queue().length} kvar i kön` : ""}</div>` : ""}
     ${head}
     <div class="row"><input id="sq" type="text" value="${esc(query || "")}" placeholder="Titel (gärna med år, t.ex. Alien 1979)">
@@ -1716,9 +1780,9 @@ async function viewAdd({ query = "", barcode = null, candidates = null, productT
     try { renderList(await api(`/api/search?q=${encodeURIComponent($("#sq").value)}`)); }
     catch (e) { $("#results").innerHTML = `<div class="notice bad">${esc(e.message)}</div>`; }
   };
-  $("#sq").onkeydown = (e) => e.key === "Enter" && $("#b-sq").onclick();
+  onEnter($("#sq"), () => $("#b-sq").onclick());
   if (candidates?.length && !match) renderList(candidates);
-  else if (query && !match) $("#b-sq").onclick();
+  else if (query && (!match || !barcode)) $("#b-sq").onclick(); // vald titel: visa övriga träffar under
   if (!barcode && !query) $("#sq").focus();
 }
 

@@ -486,3 +486,13 @@ svg.growth text.hl { fill: var(--text); font-weight: 700; }
 
 #offline { position: fixed; top: calc(env(safe-area-inset-top) + 6px); left: 50%; transform: translateX(-50%); z-index: 20;
   background: var(--warn); color: #1a1405; font-weight: 600; font-size: .82rem; padding: 6px 14px; border-radius: 999px; box-shadow: var(--shadow); }
+
+/* Skanna eller sök: fältet överst, förslag med omslag under, kameran viker undan när man skriver */
+.scan-input { margin-top: 4px; }
+.scan-input input { font-size: 1.05rem; }
+#suggest:not(:empty) { margin: 4px 0 10px; }
+.suggest-list { border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: var(--card); }
+.suggest-item { padding: 8px 10px; border-bottom: 1px solid var(--line); border-radius: 0; }
+.suggest-item:last-child { border-bottom: 0; }
+.suggest-item:hover { background: var(--card2); }
+#video-wrap.collapsed { display: none; }

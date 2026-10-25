@@ -182,6 +182,20 @@ def search_filter(rows, q, field="title"):
     return [r for _, r in scored]
 
 
+def split_guesses(word: str, limit: int = 5) -> list[str]:
+    """Ihopskrivna sökord delas på troliga ställen: 'harrypotter' -> 'harry potter'.
+    Ord som finns i samlingens titlar provas först, sedan delningar nära mitten."""
+    w = word.lower()
+    with db.connect() as con:
+        known = {t for (title,) in con.execute("SELECT title FROM items")
+                 for t in re.findall(r"[a-zåäöéü]{3,}", (title or "").lower())}
+    cuts = [i for i in range(3, len(w) - 2)]
+    good = [i for i in cuts if w[:i] in known or w[i:] in known]
+    good.sort(key=lambda i: -(w[:i] in known) - (w[i:] in known))
+    rest = sorted((i for i in cuts if i not in good), key=lambda i: abs(i - len(w) / 2))
+    return [f"{word[:i]} {word[i:]}" for i in (good + rest)[:limit]]
+
+
 def facets(lib=None, kind=""):
     """Värden till filtermenyerna (för fliken som visas: musik har egna format och genrer)."""
     s, a = _lib(lib)

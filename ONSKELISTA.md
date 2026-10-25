@@ -1,11 +1,19 @@
 # Önskelista och status
 
-Senast uppdaterad: 2026-10-25. Version **4.1.1** är pushad (`:latest`, `:4.1.1`; taggar `v4.0`/`v4.1`/`v4.1.1`):
+Senast uppdaterad: 2026-10-25. Version **4.1.2** är pushad (`:latest`, `:4.1.2`) – fixar att det inte gick att skriva i fälten på datorn. 4.1.1:
 Jellyfin-inloggning för Jellyfin 12, ikon/logotyp för Home Assistant (`brand/`, HA 2026.3+) och säkrare laddning av HA-kortet.
 Arbetssätt: ändringar testas lokalt (testserver på port 8765 med kopia av samlingen) och pushas
 först när ägaren säger till.
 
 ## Önskemål till nästa version (bygg först när ägaren säger till)
+
+_Pushat i 4.1.2 (2026-10-25), bekräftat av ägaren:_ skanningsrutan har fältet överst (med fokus direkt), kollar om datorn har
+en kamera innan den startas, och visar förslag med omslag medan man skriver (film via TMDB, musik via
+MusicBrainz – egna skivor först med ✓ Har, ihopskrivna sökord som ”harrypotter” delas automatiskt).
+**Buggen hittad och fixad:** fälten hade `onkeydown = (e) => e.key === "Enter" && …`, som svarar `false` för alla
+andra tangenter – då stoppar webbläsaren tangenttrycket, så inget gick att skriva på ett riktigt tangentbord
+(mobilens skärmtangentbord gick förbi det). Gällde skanningsfältet och sökfälten i Lägg till/Fel film/Fel album.
+Verifierat med riktiga tangenttryck i Edge.
 
 1. **Ta bort / tömma den enda samlingen** – i dag visas ”Ta bort” bara när det finns flera samlingar, utan förklaring.
    - ”Ta bort” visas alltid. Är det den enda samlingen förklarar appen det och skapar automatiskt en ny tom samling.

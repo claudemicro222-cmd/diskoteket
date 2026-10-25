@@ -91,3 +91,22 @@ def test_digital_only(client):
                          ("jellyfin", "movie", "tt0133093", 603, "The Matrix", 1999)])
     only = client.get("/api/digital/only?lib=1").json()
     assert [(o["title"], sorted(o["sources"])) for o in only] == [("The Matrix", ["jellyfin", "plex"])]
+
+
+def test_search_marks_owned_and_splits_words(client, monkeypatch):
+    from app import tmdb
+    calls = []
+
+    async def fake_search(query, year=None):
+        calls.append(query)
+        if query.lower() == "evil dead":
+            return [{"tmdb_id": 764, "type": "movie", "title": "The Evil Dead", "year": 1981, "poster_path": "/e.jpg"}]
+        return []
+
+    with db.connect() as con:
+        con.execute("UPDATE items SET tmdb_id=764 WHERE title='Evil Dead'")
+    monkeypatch.setattr(tmdb, "search", fake_search)
+    monkeypatch.setattr(tmdb, "enabled", lambda: True)
+    r = client.get("/api/search?q=evildead&lib=1").json()
+    assert calls[:2] == ["evildead", "evil dead"]  # "evil" och "dead" finns i samlingens titlar
+    assert r[0]["title"] == "The Evil Dead" and r[0]["owned"][0]["title"] == "Evil Dead"

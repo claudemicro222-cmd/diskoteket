@@ -19,7 +19,7 @@ from . import (auth, barcodes, clz_import, covers, db, enrich, history, mediaser
                sharing, tmdb, trash)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "4.1.1"
+VERSION = "4.1.2"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 
@@ -585,7 +585,41 @@ async def music_barcode(request):
 async def music_search(request):
     if not (music.mb_enabled() or music.discogs_enabled()):
         raise HTTPException(400, "Slå på MusicBrainz eller fyll i en Discogs-nyckel under Meny → Inställningar")
-    return JSONResponse(await music.search(q(request, "q"), q(request, "artist") or None))
+    results = await music.search(q(request, "q"), q(request, "artist") or None)
+    # Markera skivor man redan har: samma utgåva, eller samma artist + album
+    s, a = repo._lib(lib_of(request))
+    with db.connect() as con:
+        mine = [dict(r) for r in con.execute(
+            f"SELECT id, artist, title, mbid, discogs_id, collection_status FROM items WHERE kind='music'{s}", a)]
+    for c in results:
+        hits = [m for m in mine if (c.get("mbid") and m["mbid"] == c["mbid"])
+                or (c.get("discogs_id") and m["discogs_id"] == c["discogs_id"])
+                or (music.norm(m["title"]) == music.norm(c["title"]) and music.norm(m["artist"]) == music.norm(c["artist"]))]
+        c["owned"] = [h for h in hits if "wish" not in (h["collection_status"] or "").lower()]
+        c["wished"] = any("wish" in (h["collection_status"] or "").lower() for h in hits)
+    # Fysiska skivor före digitala utgåvor, och samma album bara en gång per format
+    physical = lambda c: (c.get("format") or "") in ("", "Digital")  # noqa: E731
+    seen, tidy = set(), []
+    for c in sorted(results, key=lambda c: (not c["owned"], physical(c))):
+        key = (music.norm(c["artist"]), music.norm(c["title"]), c.get("format"))
+        if key not in seen:
+            seen.add(key)
+            tidy.append(c)
+    # Egna skivor som matchar sökordet först, så man ser direkt om man redan har den
+    words = music.norm(q(request, "q")).split()
+    local = [m for m in mine if words and all(w in music.norm(f"{m['artist']} {m['title']}") for w in words)
+             and "wish" not in (m["collection_status"] or "").lower()][:3]
+    own_ids = {h["id"] for c in tidy for h in c["owned"]}
+    if local:
+        with db.connect() as con:
+            extra = {r["id"]: dict(r) for r in con.execute(
+                f"SELECT id, year, format, poster_path FROM items WHERE id IN ({','.join('?' * len(local))})",
+                [m["id"] for m in local])}
+        tidy = [{"source": "Din samling", "title": m["title"], "artist": m["artist"], "year": extra[m["id"]]["year"],
+                 "format": extra[m["id"]]["format"], "mbid": m["mbid"], "discogs_id": m["discogs_id"],
+                 "cover": f"/poster{extra[m['id']]['poster_path']}" if extra[m["id"]]["poster_path"] else None,
+                 "owned": [m], "wished": False} for m in local if m["id"] not in own_ids] + tidy
+    return JSONResponse(tidy)
 
 
 async def music_add(request):
@@ -632,7 +666,15 @@ async def search(request):
     m = re.match(r"^(.*?)[\s,]*\(?((?:19|20)\d{2})\)?$", query)  # "Alien 1979" / "Alien (1979)"
     if not year and m and m.group(1).strip():
         query, year = m.group(1).strip(), m.group(2)
-    return JSONResponse(await tmdb.search(query, int(year) if str(year).isdigit() else None))
+    y = int(year) if str(year).isdigit() else None
+    results = await tmdb.search(query, y)
+    if not results and " " not in query and len(query) >= 6:
+        for guess in repo.split_guesses(query):  # "harrypotter" -> "harry potter"
+            results = await tmdb.search(guess, y)
+            if results:
+                break
+    # Markera det man redan har (eller önskar), så att man inte lägger till dubbletter
+    return JSONResponse(_mark(results, _owned_map(lib_of(request))))
 
 
 # ---------- Import & metadata ----------

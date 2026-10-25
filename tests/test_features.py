@@ -144,3 +144,10 @@ def test_share_page_and_loan_request(client):
     assert client.get("/api/loan-requests").json() == []
     client.put("/api/share", json={"enable": False})
     assert client.get(f"/api/share/{t}/items").status_code == 404
+
+
+def test_split_guesses_uses_titles_in_collection(client):
+    with db.connect() as con:
+        con.execute("UPDATE items SET title='Harry Potter och de vises sten' WHERE title='Alien'")
+    assert repo.split_guesses("harrypotter")[0] == "harry potter"
+    assert repo.split_guesses("HarryPotter")[0] == "Harry Potter"  # skiftläget behålls
