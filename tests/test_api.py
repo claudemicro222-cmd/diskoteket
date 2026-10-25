@@ -68,9 +68,9 @@ def test_export(client):
     r = client.get("/api/export?format=csv&lib=1")
     assert r.status_code == 200 and "attachment" in r.headers["content-disposition"]
     text = r.content.decode("utf-8-sig")
-    assert "The Bridge" in text and "Alien" in text and "Mina filmer" in text
+    assert "The Bridge" in text and "Alien" in text and "My collection" in text
     data = json.loads(client.get("/api/export?format=json").content)
-    assert len(data["items"]) == 5 and data["libraries"][0]["name"] == "Mina filmer"
+    assert len(data["items"]) == 5 and data["libraries"][0]["name"] == "My collection"
 
 
 def test_music_manual_add_and_duplicates(client):

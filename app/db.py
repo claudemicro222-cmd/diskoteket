@@ -162,8 +162,12 @@ def init():
         con.executescript(OTHER_TABLES)
         if "kind" not in _columns(con, "digital"):
             con.execute("ALTER TABLE digital ADD COLUMN kind TEXT")
+        if exists and not con.execute("SELECT 1 FROM settings WHERE key='language'").fetchone():
+            # Fanns samlingen redan före 4.2 var appen på svenska – fortsätt så. Nya installationer får engelska.
+            con.execute("INSERT INTO settings (key, value) VALUES ('language', 'sv')")
         if not con.execute("SELECT 1 FROM libraries").fetchone():
-            con.execute("INSERT INTO libraries (id, name) VALUES (1, 'Mina filmer')")
+            lang = (con.execute("SELECT value FROM settings WHERE key='language'").fetchone() or ["en"])[0]
+            con.execute("INSERT INTO libraries (id, name) VALUES (1, ?)", ("Mina filmer" if lang == "sv" else "My collection",))
         first = con.execute("SELECT MIN(id) FROM libraries").fetchone()[0]
         con.execute("UPDATE items SET library_id=? WHERE library_id IS NULL "
                     "OR library_id NOT IN (SELECT id FROM libraries)", (first,))

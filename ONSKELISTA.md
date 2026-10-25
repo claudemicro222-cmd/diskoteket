@@ -7,6 +7,11 @@ först när ägaren säger till.
 
 ## Önskemål till nästa version (bygg först när ägaren säger till)
 
+**Version 4.2 pushad 2026-10-25.** Alla fem punkter nedan
+är klara: töm/ta bort samling, filter utan omslag, engelska + svenska (engelska standard på nya installationer,
+svenska på befintliga; README på engelska + README.sv.md; Unraid-mallen och HA-kortet på engelska/svenska),
+filter på skådespelare/regissör, ny meny med undermenyer, och IMDb-betyg med stjärna på filmsidan. 40 tester gröna, skrivning testad med riktiga tangenttryck.
+
 _Pushat i 4.1.2 (2026-10-25), bekräftat av ägaren:_ skanningsrutan har fältet överst (med fokus direkt), kollar om datorn har
 en kamera innan den startas, och visar förslag med omslag medan man skriver (film via TMDB, musik via
 MusicBrainz – egna skivor först med ✓ Har, ihopskrivna sökord som ”harrypotter” delas automatiskt).
@@ -19,6 +24,32 @@ Verifierat med riktiga tangenttryck i Edge.
    - ”Ta bort” visas alltid. Är det den enda samlingen förklarar appen det och skapar automatiskt en ny tom samling.
    - Ny knapp **”Töm samlingen”**: tar bort alla titlar och all musik men behåller samlingen (och namnet).
    - Säkerhetskopia tas först i båda fallen, precis som i dag.
+2. **Filter: ”Saknar omslag”** – i Filter på varje flik (Alla, Filmer, Serier, Musik, Önskelista) ett val
+   ”Bara titlar utan omslag”, så man direkt ser vilka som saknar omslag i rutnätet. Visas som ett filterchip
+   som går att kryssa bort, och fungerar ihop med övriga filter (t.ex. format eller samling).
+   (Det finns redan Meny → ”Saknar omslag”/”Album utan omslag”, men som separata listor – nu i själva rutnätet.)
+3. **Flera språk i appen** – all text i appen (även inloggningssidan, vänsidan och felmeddelanden) översatt.
+   - **Engelska är standard** på en nyinstallerad app. Språkval under Meny → Inställningar (sparas per enhet).
+     Befintliga installationer (som ägarens) får svenska satt automatiskt vid uppgraderingen, så inget ändras där.
+   - **README på engelska** som huvudsida på GitHub, med en svensk version (`README.sv.md`) länkad överst.
+     Vibecodat-varningen finns kvar på båda. Unraid-mallen och Home Assistant-integrationens texter på engelska
+     som standard (HA har redan engelska och svenska).
+   - Börja med **svenska och engelska**. Förslag på fler, i ordning: norska, danska, finska (nordiska användare,
+     samma utgåvor via MyMovies), tyska, spanska, franska.
+   - Valfritt: hämta handling och titlar från TMDB på samma språk (finns redan som egen inställning i dag).
+   - Översättningarna görs av Claude (AI) – märks som sådana, och rättelser från användare tas gärna emot.
+4. **Filtrera på skådespelare (och regissör)** i rutnätet – i Filter: ett sökbart fält med förslag ur samlingen
+   (”Tom H…” → Tom Hanks, Tom Hardy), med antal titlar per namn. Visas som filterchip och går att kombinera med
+   andra filter. Även klick på en skådespelare i en film kan ge ”Visa alla i samlingen” direkt i rutnätet.
+5. **Ny, enklare meny (☰)** – färre val på första nivån, resten i undermenyer som hör ihop. Förslag:
+   - Överst: kort status (antal filmer/serier/album, pågående hämtning, nya låneförfrågningar).
+   - **➕ Lägg till** → film/serie, musik, klistra in en lista, importera från CLZ, importera omslag
+   - **📚 Samlingen** → statistik, årsöversikt, filmserier, hyllkarta, inventering, saknar omslag, bara digitalt
+   - **🤝 Lån och försäljning** → utlånat, vänsida och låneförfrågningar, säljlista
+   - **💾 Data** → säkerhetskopior, exportera, tittarhistorik, papperskorgen, uppdatera metadata
+   - **⚙ Inställningar** → allmänt (språk, tema, visning), samlingar, TMDB, musik (MusicBrainz/Discogs),
+     streckkoder, Plex/Jellyfin, inloggning, Home Assistant – inställningssidan delas upp i dessa undersidor
+     i stället för en lång sida.
 
 ## Att testa / följa upp
 

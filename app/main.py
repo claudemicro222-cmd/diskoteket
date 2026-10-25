@@ -19,7 +19,7 @@ from . import (auth, barcodes, clz_import, covers, db, enrich, history, mediaser
                sharing, tmdb, trash)
 
 STATIC = os.path.join(os.path.dirname(__file__), "static")
-VERSION = "4.1.2"
+VERSION = "4.2"
 digital_state = {"last": None, "result": None}
 _tasks = set()
 
@@ -99,13 +99,32 @@ async def library_delete(request):
     lib = repo.library(lib_id)
     if not lib:
         raise HTTPException(404, "Samlingen finns inte")
-    if len(repo.libraries()) <= 1:
-        raise HTTPException(400, "Det måste finnas minst en samling")
     if (await body(request)).get("confirm", "").strip() != lib["name"]:
         raise HTTPException(400, "Namnet stämmer inte – inget togs bort")
     safe = re.sub(r"[^A-Za-z0-9]+", "-", lib["name"]).strip("-")[:30] or "samling"
     backup = await asyncio.to_thread(repo.backup_now, f"fore-borttagning-{safe}")
+    created = None
+    if len(repo.libraries()) <= 1:  # den enda samlingen: en ny tom tar dess plats
+        sv = settings.get("language") == "sv"
+        name = "Mina filmer" if sv else "My collection"
+        if name == lib["name"]:
+            name = "Ny samling" if sv else "New collection"
+        created = repo.create_library(name)
     n = repo.delete_library(lib_id)
+    return JSONResponse({"deleted": n, "backup": backup, "created": created, "libraries": repo.libraries()})
+
+
+async def library_empty(request):
+    """Töm samlingen: alla titlar och all musik bort, men samlingen och namnet finns kvar."""
+    lib_id = request.path_params["lib_id"]
+    lib = repo.library(lib_id)
+    if not lib:
+        raise HTTPException(404, "Samlingen finns inte")
+    if (await body(request)).get("confirm", "").strip() != lib["name"]:
+        raise HTTPException(400, "Namnet stämmer inte – inget togs bort")
+    safe = re.sub(r"[^A-Za-z0-9]+", "-", lib["name"]).strip("-")[:30] or "samling"
+    backup = await asyncio.to_thread(repo.backup_now, f"fore-tomning-{safe}")
+    n = repo.empty_library(lib_id)
     return JSONResponse({"deleted": n, "backup": backup, "libraries": repo.libraries()})
 
 
@@ -119,7 +138,11 @@ async def items_list(request):
         format=p.get("format", ""), genre=p.get("genre", ""), location=p.get("location", ""),
         watched=p.get("watched", ""), digital=p.get("digital", ""), sort=p.get("sort", "title"),
         missing_poster=qbool(request, "missing_poster"), collection_id=int(coll) if coll.isdigit() else None,
-        field=p.get("field", "title"), tag=p.get("tag", "")))
+        field=p.get("field", "title"), tag=p.get("tag", ""), person=p.get("person", "")))
+
+
+async def people(request):
+    return JSONResponse(repo.people(q(request, "q"), lib_of(request)))
 
 
 async def facets(request):
@@ -1040,10 +1063,11 @@ def _with_version(name):
     den nya koden efter en uppdatering i stället för en gammal sparad kopia."""
     with open(os.path.join(STATIC, name), encoding="utf-8") as f:
         html = f.read()
-    for asset in ("app.js", "style.css"):
+    for asset in ("app.js", "style.css", "i18n.js"):
         v = int(os.path.getmtime(os.path.join(STATIC, asset)))
         html = html.replace(f"/static/{asset}\"", f"/static/{asset}?v={v}\"")
-    return html
+    lang = settings.get("language") or "en"  # standardspråket; varje enhet kan välja eget
+    return html.replace('<html lang="sv">', f'<html lang="{lang}" data-lang="{lang}">', 1)
 
 
 async def index(request):
@@ -1096,6 +1120,7 @@ routes = [
     Route("/api/libraries", library_create, methods=["POST"]),
     Route("/api/libraries/{lib_id:int}", library_rename, methods=["PATCH"]),
     Route("/api/libraries/{lib_id:int}", library_delete, methods=["DELETE"]),
+    Route("/api/libraries/{lib_id:int}/empty", library_empty, methods=["POST"]),
     Route("/api/items", items_list),
     Route("/api/items", item_add, methods=["POST"]),
     Route("/api/items/{item_id:int}", item_get),
@@ -1107,6 +1132,7 @@ routes = [
     Route("/api/items/{item_id:int}/cover", item_cover, methods=["POST"]),
     Route("/api/covers/import", covers_import, methods=["POST"]),
     Route("/api/facets", facets),
+    Route("/api/people", people),
     Route("/api/barcode/{code}", barcode),
     Route("/api/search", search),
     Route("/api/import", import_clz, methods=["POST"]),

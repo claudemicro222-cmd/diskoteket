@@ -161,3 +161,10 @@ def test_restore_old_version_backup_is_upgraded(config_dir, tmp_path):
     repo.restore_backup(data=old.read_bytes())
     assert counts() == {"movie": 3, "tv": 1}
     assert repo.libraries()[0]["name"] == "Mina filmer"
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_old_installations_keep_swedish(config_dir, version):
+    make(db.LEGACY_DB if version == 1 else db.DB_PATH, version)
+    db.init()
+    assert settings.get("language") == "sv"

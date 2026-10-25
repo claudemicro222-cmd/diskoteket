@@ -83,10 +83,19 @@ def rename_library(lib_id, name):
         con.execute("UPDATE libraries SET name=? WHERE id=?", (name.strip(), lib_id))
 
 
-def delete_library(lib_id):
+def empty_library(lib_id):
+    """Alla titlar och album i samlingen bort (med visningar och låneförfrågningar). Samlingen finns kvar."""
     with db.connect() as con:
         n = con.execute("SELECT COUNT(*) FROM items WHERE library_id=?", (lib_id,)).fetchone()[0]
+        con.execute("DELETE FROM views WHERE item_id IN (SELECT id FROM items WHERE library_id=?)", (lib_id,))
+        con.execute("DELETE FROM loan_requests WHERE item_id IN (SELECT id FROM items WHERE library_id=?)", (lib_id,))
         con.execute("DELETE FROM items WHERE library_id=?", (lib_id,))
+    return n
+
+
+def delete_library(lib_id):
+    n = empty_library(lib_id)
+    with db.connect() as con:
         con.execute("DELETE FROM libraries WHERE id=?", (lib_id,))
     return n
 
@@ -94,7 +103,7 @@ def delete_library(lib_id):
 # ---------- Listor ----------
 
 def list_items(lib=None, q="", kind="", status="owned", format="", genre="", location="", watched="",
-               digital="", sort="title", missing_poster=False, collection_id=None, field="title", tag=""):
+               digital="", sort="title", missing_poster=False, collection_id=None, field="title", tag="", person=""):
     sql = f"SELECT {LIST_COLS}, {DIGITAL} AS digital FROM items WHERE 1=1"
     s, args = _lib(lib)
     sql += s
@@ -112,6 +121,9 @@ def list_items(lib=None, q="", kind="", status="owned", format="", genre="", loc
     if tag:
         sql += " AND (' | ' || tags || ' | ') LIKE ?"
         args.append(f"% | {tag} | %")
+    if person:  # skådespelare eller regissör (hela namnet)
+        sql += " AND (' | ' || COALESCE(actors, '') || ' | ' || COALESCE(director, '') || ' | ') LIKE ?"
+        args.append(f"% | {person.strip()} | %")
     if format:
         sql += " AND format=?"
         args.append(format)
@@ -180,6 +192,24 @@ def search_filter(rows, q, field="title"):
             r.pop(k, None)
     scored.sort(key=lambda x: x[0])  # stabil: inom samma nivå behålls vald sortering
     return [r for _, r in scored]
+
+
+def people(q="", lib=None, limit=12):
+    """Skådespelare och regissörer i samlingen som börjar med q (på valfritt ord), med antal titlar."""
+    s, a = _lib(lib)
+    counts, roles = {}, {}
+    with db.connect() as con:
+        for r in con.execute(f"SELECT actors, director FROM items WHERE kind != 'music' AND {OWNED}{s}", a):
+            for col, role in (("actors", "actor"), ("director", "director")):
+                for name in (r[col] or "").split(" | "):
+                    name = name.strip()
+                    if name:
+                        counts[name] = counts.get(name, 0) + 1
+                        roles.setdefault(name, set()).add(role)
+    word = re.compile(r"(?<!\w)" + re.escape(q.strip().lower())) if q.strip() else None
+    hits = [n for n in counts if not word or word.search(n.lower())]
+    hits.sort(key=lambda n: (-counts[n], n.lower()))
+    return [{"name": n, "n": counts[n], "roles": sorted(roles[n])} for n in hits[:limit]]
 
 
 def split_guesses(word: str, limit: int = 5) -> list[str]:

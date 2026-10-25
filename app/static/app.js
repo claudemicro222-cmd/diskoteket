@@ -13,7 +13,7 @@ const store = {
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* privat läge */ } },
 };
 
-const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", watched: "", digital: "", loaned: false, tag: "" };
+const DEFAULT_FILTERS = { sort: "title", format: "", genre: "", watched: "", digital: "", loaned: false, tag: "", noCover: false, person: "" };
 let state = {
   tab: "all", q: "", field: "title", items: [], facets: null, libs: [],
   lib: store.get("lib", null),               // samlingens id, eller "all"
@@ -93,6 +93,16 @@ function formatInfo(format) {
   if (/vhs/.test(f)) return { cls: "vhs", label: "VHS", icon: TAPE, threeD };
   if (/laser/.test(f)) return { cls: "dvd", label: "LD", icon: DISC, threeD };
   return f ? { cls: "other", label: format.slice(0, 10), icon: DISC, threeD } : null;
+}
+
+// IMDb-betyget som ett gult märke med stjärna (egen design, inte IMDb:s logotyp). Länkar till IMDb om ID finns.
+function imdbBadge(it) {
+  if (!it.imdb_rating) return "";
+  const score = Number(it.imdb_rating).toLocaleString(appLang() === "sv" ? "sv-SE" : "en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+  const inner = `<span class="imdb-tag">IMDb</span><span class="imdb-star">★</span><b>${score}</b><span class="imdb-max">/10</span>`;
+  return it.imdb_id
+    ? `<a class="imdb" href="https://www.imdb.com/title/${esc(it.imdb_id)}/" target="_blank" rel="noopener" title="IMDb-betyg – öppna på IMDb">${inner}</a>`
+    : `<span class="imdb" title="IMDb-betyg">${inner}</span>`;
 }
 
 function fmtBadge(format, extraCls = "") {
@@ -209,13 +219,14 @@ async function viewLibPicker() {
 
 async function viewLibManage() {
   await loadLibs();
-  openSheet(`<h2>Hantera samlingar</h2>
+  openSheet(`<h2>Samlingar</h2>
     ${state.libs.map((l) => `<div class="list-item"><div class="grow">${esc(l.name)}<div class="muted small">${l.owned} titlar${l.wish ? ` · ${l.wish} önskade` : ""}</div></div>
       <button class="btn small" data-rename="${l.id}">Byt namn</button>
-      ${state.libs.length > 1 ? `<button class="btn small danger" data-del="${l.id}">Ta bort</button>` : ""}</div>`).join("")}
+      <button class="btn small" data-empty="${l.id}">Töm</button>
+      <button class="btn small danger" data-del="${l.id}">Ta bort</button></div>`).join("")}
     <h3>Ny samling</h3>
     <div class="row"><input id="lib-new" type="text" placeholder="T.ex. Barnens filmer"><button class="btn primary" id="lib-add">Skapa</button></div>
-    <p class="muted small">Importera en CLZ-export till en samling via Meny → Importera.</p>`);
+    <p class="muted small">Importera en CLZ-export till en samling via Meny → Lägg till → Importera från CLZ.</p>`);
   $("#lib-add").onclick = async () => {
     const name = $("#lib-new").value.trim();
     if (!name) return;
@@ -230,26 +241,36 @@ async function viewLibManage() {
     await api(`/api/libraries/${lib.id}`, { method: "PATCH", json: { name } });
     await loadLibs(); refresh();
   }));
-  $$("[data-del]").forEach((b) => (b.onclick = () => show(viewLibDelete, +b.dataset.del)));
+  $$("[data-del]").forEach((b) => (b.onclick = () => show(viewLibDelete, +b.dataset.del, "delete")));
+  $$("[data-empty]").forEach((b) => (b.onclick = () => show(viewLibDelete, +b.dataset.empty, "empty")));
 }
 
-function viewLibDelete(id) {
+// Ta bort eller töm en samling. Den enda samlingen går också att ta bort – då skapas en ny tom.
+function viewLibDelete(id, mode = "delete") {
   const lib = state.libs.find((l) => l.id === id);
-  openSheet(`<h2>Ta bort samling</h2>
-    <div class="notice bad">Samlingen <b>${esc(lib.name)}</b> och alla dess <b>${lib.owned + lib.wish} titlar</b> tas bort.
-    En säkerhetskopia av hela databasen sparas automatiskt precis innan, så det går att ångra.</div>
+  const empty = mode === "empty";
+  const only = state.libs.length === 1;
+  openSheet(`<h2>${empty ? "Töm samlingen" : "Ta bort samling"}</h2>
+    <div class="notice bad">${empty
+      ? `Alla <b>${lib.owned + lib.wish} titlar och album</b> i <b>${esc(lib.name)}</b> tas bort. Samlingen och namnet finns kvar.`
+      : `Samlingen <b>${esc(lib.name)}</b> och alla dess <b>${lib.owned + lib.wish} titlar och album</b> tas bort.
+         ${only ? "Det är din enda samling, så en ny tom samling skapas i stället." : ""}`}
+      En säkerhetskopia av hela databasen sparas automatiskt precis innan, så det går att ångra.</div>
     <label class="form-label">Skriv <b>${esc(lib.name)}</b> för att bekräfta</label>
     <input id="del-confirm" type="text" autocomplete="off" autocapitalize="off" spellcheck="false">
-    <button class="btn danger-fill" id="del-go" disabled>Ta bort för gott</button>
+    <button class="btn danger-fill" id="del-go" disabled>${empty ? "Töm samlingen" : "Ta bort för gott"}</button>
     <button class="btn" id="del-cancel">Avbryt</button>`);
   $("#del-confirm").focus();
   $("#del-confirm").oninput = (e) => ($("#del-go").disabled = e.target.value.trim() !== lib.name);
   $("#del-cancel").onclick = back;
   $("#del-go").onclick = async () => {
-    if (!confirm(`Sista chansen: ta bort ”${lib.name}”?`)) return;
-    const r = await api(`/api/libraries/${id}`, { method: "DELETE", json: { confirm: $("#del-confirm").value } });
-    toast("Borttagen – en säkerhetskopia sparades först", "ok");
-    if (state.lib === id) state.lib = r.libraries[0].id;
+    if (!confirm(`Sista chansen: ${empty ? "tömma" : "ta bort"} ”${lib.name}”?`)) return;
+    const r = empty
+      ? await api(`/api/libraries/${id}/empty`, { method: "POST", json: { confirm: $("#del-confirm").value } })
+      : await api(`/api/libraries/${id}`, { method: "DELETE", json: { confirm: $("#del-confirm").value } });
+    toast(`${empty ? "Tömd" : "Borttagen"} – en säkerhetskopia sparades först`, "ok");
+    if (!empty && (state.lib === id || only)) state.lib = r.libraries[0].id;
+    state.facets = null;
     await loadLibs();
     stack.pop(); refresh(); load();
   };
@@ -269,6 +290,8 @@ function query() {
   p.status = state.tab === "wish" ? (state.wishMode === "upgrade" ? "upgrade" : "wish") : state.loaned ? "loaned" : "owned";
   if (tabKind()) p.kind = tabKind();
   if (state.tag) p.tag = state.tag;
+  if (state.noCover) p.missing_poster = "true";
+  if (state.person && !music) p.person = state.person;
   p.lib = state.lib === "all" ? "all" : state.lib;
   return new URLSearchParams(p);
 }
@@ -510,7 +533,7 @@ function rowHtml(c, i) {
     <div class="row-flags">${fmt}${flags}</div></div></div>`;
 }
 
-const filterKeys = () => (musicTab() ? ["format", "genre", "tag"] : ["format", "genre", "watched", "digital", "tag"]);
+const filterKeys = () => (musicTab() ? ["format", "genre", "tag", "noCover"] : ["format", "genre", "watched", "digital", "tag", "noCover", "person"]);
 function activeFilterCount() {
   return filterKeys().filter((k) => state[k]).length + (state.loaned ? 1 : 0);
 }
@@ -520,12 +543,14 @@ function renderActiveFilters() {
   if (state.format) labels.push(["format", state.format]);
   if (state.genre) labels.push(["genre", state.genre]);
   if (state.tag) labels.push(["tag", `🏷 ${state.tag}`]);
+  if (state.person && !musicTab()) labels.push(["person", `🎭 ${state.person}`]);
+  if (state.noCover) labels.push(["noCover", "Utan omslag"]);
   if (state.watched && !musicTab()) labels.push(["watched", state.watched === "1" ? "Sedda" : "Osedda"]);
   if (state.digital && !musicTab()) labels.push(["digital", state.digital === "yes" ? "Finns digitalt" : "Bara fysiskt"]);
   if (state.loaned) labels.push(["loaned", "Utlånade"]);
   $("#active-filters").innerHTML = labels.map(([k, v]) => `<button class="chip" data-k="${k}">${esc(v)} ✕</button>`).join("");
   $$("#active-filters .chip").forEach((b) => (b.onclick = () => {
-    state[b.dataset.k] = b.dataset.k === "loaned" ? false : "";
+    state[b.dataset.k] = ["loaned", "noCover"].includes(b.dataset.k) ? false : "";
     saveFilters(); load();
   }));
   const n = activeFilterCount();
@@ -536,8 +561,8 @@ function renderActiveFilters() {
 }
 
 function saveFilters() {
-  const { sort, format, genre, watched, digital, loaned, tag } = state;
-  store.set("filters", { sort, format, genre, watched, digital, loaned, tag });
+  const { sort, format, genre, watched, digital, loaned, tag, noCover, person } = state;
+  store.set("filters", { sort, format, genre, watched, digital, loaned, tag, noCover, person });
 }
 
 // Tryck på en tagg i en detaljvy: visa alla med den taggen
@@ -615,7 +640,10 @@ async function viewFilter() {
       ${music ? "" : sel("f-watched", "Sedd", [["", "Alla"], ["0", "Osedda"], ["1", "Sedda"]], state.watched)}
       ${f.digital && !music ? sel("f-digital", "Plex/Jellyfin", [["", "Alla"], ["yes", "Finns digitalt"], ["no", "Bara fysiskt"]], state.digital) : ""}
       ${f.tags?.length || state.tag ? sel("f-tag", "Tagg", [["", "Alla taggar"], ...[...new Set([...(f.tags || []), state.tag].filter(Boolean))].map((x) => [x, x])], state.tag) : ""}
+      ${music ? "" : `<label>Skådespelare eller regissör<input id="f-person" type="text" list="f-people" autocomplete="off"
+        value="${esc(state.person)}" placeholder="Börja skriva, t.ex. Tom H…"></label><datalist id="f-people"></datalist>`}
       <label class="check"><input type="checkbox" id="f-loaned" ${state.loaned ? "checked" : ""}> Visa bara utlånade</label>
+      <label class="check"><input type="checkbox" id="f-nocover" ${state.noCover ? "checked" : ""}> Bara titlar utan omslag</label>
     </div>
     <button class="btn primary" id="f-apply">Visa</button>
     <button class="btn" id="f-reset">Nollställ</button>`);
@@ -623,10 +651,21 @@ async function viewFilter() {
     state.sort = $("#f-sort").value; state.format = $("#f-format").value; state.genre = $("#f-genre").value;
     if (!music) { state.watched = $("#f-watched").value; state.digital = $("#f-digital")?.value || ""; }
     state.tag = $("#f-tag")?.value || "";
+    if (!music) state.person = $("#f-person").value.trim();
+    state.noCover = $("#f-nocover").checked;
     state.loaned = $("#f-loaned").checked;
     saveFilters(); closeSheet(); load();
   };
   $("#f-reset").onclick = () => { Object.assign(state, DEFAULT_FILTERS); saveFilters(); closeSheet(); load(); };
+  // Förslag på namn ur samlingen medan man skriver (med antal titlar)
+  let ptimer;
+  $("#f-person") && ($("#f-person").oninput = (e) => {
+    clearTimeout(ptimer);
+    ptimer = setTimeout(async () => {
+      const list = await api(`/api/people?q=${encodeURIComponent(e.target.value)}&${libParam()}`).catch(() => []);
+      $("#f-people").innerHTML = list.map((p) => `<option value="${esc(p.name)}">${p.n} ${p.n === 1 ? "titel" : "titlar"}${p.roles.includes("director") ? " · regi" : ""}</option>`).join("");
+    }, 200);
+  });
 }
 
 // ---------- Detaljvy ----------
@@ -767,10 +806,16 @@ async function viewPerson(name) {
     ${w.owned.length ? `<span class="ok-text">✓</span>` : w.wished ? `<span class="star-text">★</span>` : `<span class="muted">›</span>`}</div>`;
   openSheet(`<div class="person-head">${p.profile_path ? `<img src="${TMDB_IMG}w185${esc(p.profile_path)}" alt="">` : ""}
       <div><h2>${esc(p.name)}</h2><div class="muted">${esc({ Acting: "Skådespelare", Directing: "Regissör", Writing: "Manus" }[p.known_for] || p.known_for || "")}</div>
-      <div class="notice ok small">Du har ${mine.length} av ${p.works.length}</div></div></div>
+      <div class="notice ok small">Du har ${mine.length} av ${p.works.length}</div>
+      ${mine.length ? `<button class="btn small" id="p-filter">Visa alla i samlingen</button>` : ""}</div></div>
     ${mine.length ? `<h3>I din samling (${mine.length})</h3>${mine.map((w, i) => row(w, i, "mine")).join("")}` : ""}
     ${other.length ? `<h3>Saknas (${other.length})</h3>${other.slice(0, 80).map((w, i) => row(w, i, "other")).join("")}` : ""}`);
   const lists = { mine, other };
+  $("#p-filter") && ($("#p-filter").onclick = () => {
+    state.person = name; state.q = ""; $("#q").value = "";
+    if (musicTab()) $('#tabs [data-tab="all"]').click();
+    saveFilters(); closeSheet(); load();
+  });
   $$("#sheet-body .list-item[data-from]").forEach((el) => (el.onclick = () => {
     const w = lists[el.dataset.from][el.dataset.i];
     if (w.owned.length) show(viewItem, w.owned[0].id); else show(viewTmdbTitle, w);
@@ -838,11 +883,11 @@ async function viewItem(id) {
     ${heroHtml(it, sub)}
     ${loanNotice(it)}`);
   $("#facts").innerHTML = `
-        ${it.format ? `<div class="fmt-line">${fmtBadge(it.format)}</div>` : ""}
+        ${it.format || it.imdb_rating ? `<div class="fmt-line">${fmtBadge(it.format)} ${imdbBadge(it)}</div>` : ""}
         ${fact("År", it.year)}${fact("Utgåva", it.edition)}
         ${fact("Längd", it.runtime && `${it.runtime} min`)}${fact("Genre", pipe(it.genres))}
         ${it.director ? `<div><b>${it.kind === "tv" ? "Regi/skapare" : "Regi"}:</b> ${personLinks(it.director)}</div>` : ""}
-        ${fact("IMDb", it.imdb_rating)}${fact("Mitt betyg", it.my_rating)}${placeLink(it)}
+        ${fact("Mitt betyg", it.my_rating)}${placeLink(it)}
         ${fact("Skivor", it.nr_discs)}${fact("Streckkod", it.barcode)}${fact("Undertext", pipe(x["Subtitles"]))}
         ${fact("Inköpt", [it.purchase_price && `${it.purchase_price} kr`, x["Purchase Date"]].filter(Boolean).join(", "))}
         ${conditionFact(it)}
@@ -1211,7 +1256,8 @@ const FIELD_NAMES = { title: "titel", year: "år", poster_path: "omslag", plot: 
   watched: "sedd", barcode: "streckkod", purchase_price: "pris", collection_status: "status", genres: "genre",
   actors: "skådespelare", director: "regi", runtime: "längd", original_title: "originaltitel", loaned_to: "utlåning",
   loan_date: "utlåning", due_date: "utlåning", added_date: "tillagd", artist: "artist", label: "skivbolag",
-  cat_no: "katalognummer", tracks: "antal spår", nr_discs: "antal skivor" };
+  cat_no: "katalognummer", tracks: "antal spår", nr_discs: "antal skivor", condition: "skick", condition_notes: "om skicket",
+  tags: "taggar", sell_price: "säljpris", wish_price: "maxpris", upgrade_to: "uppgradering" };
 const fieldName = (f) => FIELD_NAMES[f] || f;
 
 function viewRefreshItem(it) {
@@ -2194,64 +2240,104 @@ function viewExport() {
 
 // ---------- Meny ----------
 
+const menuEntry = (id, icon, label, sub = "") => `<div class="menu-item" id="${id}"><span class="mi">${icon}</span>
+  <div class="grow">${label}${sub ? `<div class="muted small">${sub}</div>` : ""}</div><span class="muted">›</span></div>`;
+const bindMenu = (go) => { for (const [id, fn] of Object.entries(go)) $("#" + id) && ($("#" + id).onclick = fn); };
+const requestsText = (n) => `<b class="bad-text">${n} ${n === 1 ? "låneförfrågan" : "låneförfrågningar"}</b>`;
+
 async function viewMenu() {
   const s = await api(`/api/status?${libParam()}`);
+  state.status = s;
   const c = s.counts, e = s.enrich, p = s.posters, m = s.music;
-  const entry = (id, icon, label, sub = "") => `<div class="menu-item" id="${id}"><span class="mi">${icon}</span>
-    <div class="grow">${label}${sub ? `<div class="muted small">${sub}</div>` : ""}</div><span class="muted">›</span></div>`;
-  const group = (label) => `<div class="menu-group">${label}</div>`;
   const prog = (x, text) => `<div class="notice"><progress max="${x.total}" value="${x.done}"></progress><div class="small muted">${text}: ${x.done} av ${x.total}</div></div>`;
   const busy = (e.running ? prog(e, e.mode === "refresh" ? "Uppdaterar metadata" : "Hämtar omslag och filmserier") : "")
     + (m.running ? prog(m, "Hämtar låtlistor och skivomslag") : "")
     + (!e.running && p.running ? prog(p, "Sparar omslag lokalt") : "");
   openSheet(`
     <h2>Meny</h2>
-    <div class="notice">${esc(state.lib === "all" ? "Alla samlingar" : libName(state.lib))}: ${c.movies || 0} filmer · ${c.tv || 0} säsonger · ${c.music || 0} album</div>
-    ${s.tmdb ? "" : `<div class="notice bad">TMDB-nyckel saknas – omslag och sökning för film fungerar inte. <a href="#" id="m-fix">Fyll i under Inställningar</a>.</div>`}
+    <div class="menu-status">
+      <div><b>${c.movies || 0}</b><span>filmer</span></div><div><b>${c.tv || 0}</b><span>säsonger</span></div>
+      <div><b>${c.music || 0}</b><span>album</span></div><div><b>${c.wish || 0}</b><span>önskade</span></div>
+    </div>
+    <p class="muted small center-text">${esc(state.lib === "all" ? "Alla samlingar" : libName(state.lib))}</p>
+    ${s.tmdb ? "" : `<div class="notice bad">TMDB-nyckel saknas – omslag och sökning för film fungerar inte. <a href="#" id="m-fix">Fyll i nyckeln</a>.</div>`}
     ${busy}
-    ${group("Lägg till")}
-    ${entry("m-add", "🎬", "Film eller serie", "Sök på titel")}
-    ${entry("m-add-music", "🎵", "Musik", "Sök på artist och album")}
-    ${entry("m-bulk", "☰", "Lägg till flera filmer", "Klistra in en lista med titlar")}
-    ${group("Samlingen")}
-    ${entry("m-stats", "📊", "Statistik", "Värde, dubbletter och utveckling")}
-    ${entry("m-year", "🎉", "Årsöversikt", "Ditt år i Diskoteket")}
-    ${entry("m-coll", "🎞", "Filmserier", "Se vilka delar du saknar")}
-    ${entry("m-loans", "🤝", "Utlånat")}
-    ${entry("m-share", "👋", "Visa-sida för vänner", s.loan_requests ? `<b class="bad-text">${s.loan_requests} låneförfrågan${s.loan_requests === 1 ? "" : "ningar"}</b>` : s.share ? "På" : "Av")}
-    ${entry("m-places", "📍", "Hyllkarta", "Platser med foto")}
-    ${entry("m-sale", "🏷", "Säljlista", "Annonstext till Tradera/Blocket")}
-    ${entry("m-inv", "📋", "Inventering", "Skanna hyllan och se vad som saknas")}
-    ${s.digital.configured.length ? entry("m-digital", "▶", "Bara digitalt", "Finns i Plex/Jellyfin men inte på skiva") : ""}
-    ${entry("m-missing", "🖼", "Saknar omslag", c.no_poster ? `${c.no_poster} filmer/serier` : "")}
-    ${c.music ? entry("m-missing-music", "💿", "Album utan omslag", c.music_no_cover ? `${c.music_no_cover} album` : "") : ""}
-    ${entry("m-covers", "🗃", "Importera omslag", "Många bilder eller en zip på en gång")}
-    ${entry("m-refresh", "⟳", "Uppdatera metadata", "För filmer och serier i hela samlingen")}
-    ${entry("m-libs", "🗂", "Samlingar", `${state.libs.length} st – skapa, byt namn, ta bort`)}
-    ${group("Data")}
-    ${entry("m-import", "⬆", "Importera från CLZ", "CLZ Movies eller CLZ Music (CSV)")}
-    ${entry("m-export", "⬇", "Exportera", "CSV eller JSON")}
-    ${entry("m-history", "👁", "Tittarhistorik", "Importera från Letterboxd eller Trakt")}
-    ${entry("m-trash", "🗑", "Papperskorgen", s.trash ? `${s.trash} st – går att ångra` : "Tom")}
-    ${entry("m-backup", "💾", "Säkerhetskopior", s.backups[0] ? `Senast ${s.backups[0].time.replace("T", " ")} · återställ` : "Ta en kopia eller återställ")}
-    ${group("Inställningar")}
-    ${entry("m-settings", "⚙", "Inställningar", "TMDB, musik, omslag, Plex/Jellyfin")}
-    ${entry("m-auth", "🔒", "Inloggning", s.auth ? "På – lösenord krävs" : "Av – alla i nätverket kommer åt appen")}
-    ${entry("m-ha", "🏠", "Home Assistant", "Integration och kort")}
+    ${menuEntry("m-add", "➕", "Lägg till", "Film, serie, musik, lista eller import från CLZ")}
+    ${menuEntry("m-coll", "📚", "Samlingen", "Statistik, årsöversikt, filmserier, hyllkarta, inventering")}
+    ${menuEntry("m-share", "🤝", "Lån och försäljning", s.loan_requests ? requestsText(s.loan_requests) : "Utlånat, vänsida och säljlista")}
+    ${menuEntry("m-data", "💾", "Data", "Säkerhetskopior, export, tittarhistorik, papperskorg")}
+    ${menuEntry("m-settings", "⚙", "Inställningar", "Språk, samlingar, TMDB, musik, Plex/Jellyfin, inloggning")}
     <p class="muted small center-text">Diskoteket ${esc(s.version)} · data i ${esc(s.config_dir)}<br>
       Vibecodat – byggt av Claude (AI), inte av en proffsutvecklare.</p>`);
-  const go = { "m-add": () => show(viewAdd, {}), "m-add-music": () => show(viewMusicAdd, {}), "m-bulk": () => show(viewBulkAdd),
-    "m-covers": () => show(viewCoverImport), "m-stats": () => show(viewStats), "m-coll": () => show(viewCollections),
-    "m-loans": () => show(viewLoans), "m-inv": () => show(viewInventory), "m-missing": () => show(viewMissing),
-    "m-missing-music": () => show(viewMissing, "music"), "m-digital": () => show(viewDigitalOnly),
-    "m-refresh": () => show(viewRefreshLib), "m-libs": () => show(viewLibManage), "m-export": () => show(viewExport),
-    "m-import": () => show(viewImport), "m-backup": () => show(viewBackups), "m-auth": () => show(viewAuth),
-    "m-ha": () => show(viewHA), "m-settings": () => show(viewSettings), "m-year": () => show(viewYear),
-    "m-share": () => show(viewShare), "m-places": () => show(viewPlaces), "m-sale": () => show(viewSale),
-    "m-history": () => show(viewHistoryImport), "m-trash": () => show(viewTrash) };
-  for (const [id, fn] of Object.entries(go)) $("#" + id) && ($("#" + id).onclick = fn);
-  $("#m-fix") && ($("#m-fix").onclick = (ev) => { ev.preventDefault(); show(viewSettings); });
+  bindMenu({ "m-add": () => show(viewMenuAdd), "m-coll": () => show(viewMenuCollection, s),
+    "m-share": () => show(viewMenuShare, s), "m-data": () => show(viewMenuData, s), "m-settings": () => show(viewSettingsMenu) });
+  $("#m-fix") && ($("#m-fix").onclick = (ev) => { ev.preventDefault(); show(viewSettings, "tmdb"); });
   if (e.running || p.running || m.running) setTimeout(() => stack.at(-1)?.[0] === viewMenu && !$("#sheet").hidden && refresh(), 1500);
+}
+
+function viewMenuAdd() {
+  openSheet(`<h2>Lägg till</h2>
+    ${menuEntry("m-add-film", "🎬", "Film eller serie", "Sök på titel")}
+    ${menuEntry("m-add-music", "🎵", "Musik", "Sök på artist och album")}
+    ${menuEntry("m-scan", "📷", "Skanna streckkoder", "Med mobilkameran, en i taget eller i serie")}
+    ${menuEntry("m-bulk", "☰", "Klistra in en lista", "Många filmer på en gång")}
+    ${menuEntry("m-import", "⬆", "Importera från CLZ", "CLZ Movies eller CLZ Music (CSV)")}
+    ${menuEntry("m-covers", "🗃", "Importera omslag", "Många bilder eller en zip på en gång")}`);
+  bindMenu({ "m-add-film": () => show(viewAdd, {}), "m-add-music": () => show(viewMusicAdd, {}), "m-scan": () => $("#btn-scan").click(),
+    "m-bulk": () => show(viewBulkAdd), "m-import": () => show(viewImport), "m-covers": () => show(viewCoverImport) });
+}
+
+function viewMenuCollection(s) {
+  const c = s.counts;
+  openSheet(`<h2>Samlingen</h2>
+    ${menuEntry("m-stats", "📊", "Statistik", "Värde, dubbletter och utveckling")}
+    ${menuEntry("m-year", "🎉", "Årsöversikt", "Ditt år i Diskoteket")}
+    ${menuEntry("m-colls", "🎞", "Filmserier", "Se vilka delar du saknar")}
+    ${menuEntry("m-places", "📍", "Hyllkarta", "Platser med foto")}
+    ${menuEntry("m-inv", "📋", "Inventering", "Skanna hyllan och se vad som saknas")}
+    ${menuEntry("m-missing", "🖼", "Saknar omslag", [c.no_poster && `${c.no_poster} filmer/serier`, c.music_no_cover && `${c.music_no_cover} album`].filter(Boolean).join(" · "))}
+    ${s.digital.configured.length ? menuEntry("m-digital", "▶", "Bara digitalt", "Finns i Plex/Jellyfin men inte på skiva") : ""}
+    ${menuEntry("m-refresh", "⟳", "Uppdatera metadata", "För filmer och serier i hela samlingen")}`);
+  bindMenu({ "m-stats": () => show(viewStats), "m-year": () => show(viewYear), "m-colls": () => show(viewCollections),
+    "m-places": () => show(viewPlaces), "m-inv": () => show(viewInventory), "m-digital": () => show(viewDigitalOnly),
+    "m-missing": () => { state.noCover = true; saveFilters(); closeSheet(); load(); toast("Visar titlar utan omslag – kryssa bort filtret överst"); },
+    "m-refresh": () => show(viewRefreshLib) });
+}
+
+function viewMenuShare(s) {
+  openSheet(`<h2>Lån och försäljning</h2>
+    ${menuEntry("m-loans", "🤝", "Utlånat", "Vem har vad, och vad är försenat")}
+    ${menuEntry("m-friends", "👋", "Visa-sida för vänner", s.loan_requests ? requestsText(s.loan_requests) : s.share ? "På" : "Av")}
+    ${menuEntry("m-sale", "🏷", "Säljlista", "Annonstext till Tradera/Blocket")}`);
+  bindMenu({ "m-loans": () => show(viewLoans), "m-friends": () => show(viewShare), "m-sale": () => show(viewSale) });
+}
+
+function viewMenuData(s) {
+  openSheet(`<h2>Data</h2>
+    ${menuEntry("m-backup", "💾", "Säkerhetskopior", s.backups[0] ? `Senast ${s.backups[0].time.replace("T", " ")} · återställ` : "Ta en kopia eller återställ")}
+    ${menuEntry("m-export", "⬇", "Exportera", "CSV eller JSON")}
+    ${menuEntry("m-history", "👁", "Tittarhistorik", "Importera från Letterboxd eller Trakt")}
+    ${menuEntry("m-trash", "🗑", "Papperskorgen", s.trash ? `${s.trash} st – går att ångra` : "Tom")}`);
+  bindMenu({ "m-backup": () => show(viewBackups), "m-export": () => show(viewExport),
+    "m-history": () => show(viewHistoryImport), "m-trash": () => show(viewTrash) });
+}
+
+async function viewSettingsMenu() {
+  const s = state.status || await api("/api/status");
+  const media = s.digital.configured.map((x) => (x === "plex" ? "Plex" : "Jellyfin")).join(" + ");
+  openSheet(`<h2>Inställningar</h2>
+    ${menuEntry("st-general", "🌐", "Allmänt", "Språk, tema, visning, omslag och säkerhetskopior")}
+    ${menuEntry("st-libs", "🗂", "Samlingar", `${state.libs.length} st – skapa, byt namn, töm, ta bort`)}
+    ${menuEntry("st-tmdb", "🎬", "TMDB", s.tmdb ? "Nyckel ifylld" : `<b class="bad-text">Nyckel saknas</b>`)}
+    ${menuEntry("st-music", "🎵", "Musik", "MusicBrainz och Discogs")}
+    ${menuEntry("st-barcodes", "▥", "Streckkoder", "MyMovies, UPCitemdb, EAN-DB")}
+    ${menuEntry("st-media", "▶", "Plex och Jellyfin", media || "Inte inställt")}
+    ${menuEntry("st-auth", "🔒", "Inloggning", s.auth ? "På – lösenord krävs" : "Av – alla i nätverket kommer åt appen")}
+    ${menuEntry("st-ha", "🏠", "Home Assistant", "Integration och kort")}`);
+  bindMenu({ "st-general": () => show(viewSettings, "general"), "st-libs": () => show(viewLibManage),
+    "st-tmdb": () => show(viewSettings, "tmdb"), "st-music": () => show(viewSettings, "music"),
+    "st-barcodes": () => show(viewSettings, "barcodes"), "st-media": () => show(viewSettings, "media"),
+    "st-auth": () => show(viewAuth), "st-ha": () => show(viewHA) });
 }
 
 function viewRefreshLib() {
@@ -2350,56 +2436,61 @@ async function viewBackups() {
   };
 }
 
-async function viewSettings() {
+const LANGUAGES = [["en", "English"], ["sv", "Svenska"]];
+
+async function viewSettings(section = "general") {
   const [s, st] = await Promise.all([api("/api/settings"), api("/api/status")]);
   const secret = (k, label, ph) => `<label>${label}<input id="s-${k}" type="password" autocomplete="off"
     placeholder="${s[k].set ? `Sparad (${esc(s[k].hint)}) – lämna tomt för att behålla` : esc(ph)}"></label>`;
   const text = (k, label, ph = "", type = "text") => `<label>${label}<input id="s-${k}" type="${type}" value="${esc(s[k])}" placeholder="${esc(ph)}"></label>`;
-  openSheet(`
-    <h2>Inställningar</h2>
-    <div class="form">
-      <h3>TMDB (omslag och sökning)</h3>
+  const check = (k, label) => `<label class="check"><input type="checkbox" id="s-${k}" ${s[k] === "1" ? "checked" : ""}> ${label}</label>`;
+  const test = (what, label) => `<button class="btn small" data-test="${what}">${label}</button> <span class="test-msg" id="t-${what}"></span>`;
+  const sections = {
+    general: ["Allmänt", `
+      <label>Språk i appen<select id="lang-device">${LANGUAGES.map(([v, l]) => option(v, l, appLang())).join("")}</select></label>
+      <label>Standardspråk för nya enheter<select id="s-language">${LANGUAGES.map(([v, l]) => option(v, l, s.language)).join("")}</select></label>
+      <p class="muted small">Språket i appen sparas på den här enheten. Standardspråket gäller enheter som inte valt själva.</p>
+      <button class="btn" id="g-view">Visning och tema…</button>
+      <h3>Omslag</h3>
+      ${check("local_posters", "Spara omslag lokalt i appdata")}
+      <p class="muted small">${st.posters.files} omslag sparade (${st.posters.mb} MB). Lokala omslag gör att appen fungerar även om TMDB ligger nere.</p>
+      <h3>Säkerhetskopior</h3>
+      <div class="two">${text("backup_hours", "Var X:e timme (0 = av)", "24", "number")}${text("backup_keep", "Antal att spara", "14", "number")}</div>`],
+    tmdb: ["TMDB", `
+      <p class="muted small">TMDB ger omslag, handling och sökning för filmer och serier. Gratis nyckel: themoviedb.org → Settings → API.</p>
       ${secret("tmdb_token", "API Read Access Token", "Klistra in din nyckel från themoviedb.org")}
       <label>Språk för handling och titlar<select id="s-tmdb_language">
         ${[["sv-SE", "Svenska"], ["en-US", "Engelska"], ["nb-NO", "Norska"], ["da-DK", "Danska"], ["fi-FI", "Finska"], ["de-DE", "Tyska"]]
           .map(([v, l]) => option(v, l, s.tmdb_language)).join("")}</select></label>
-      <button class="btn small" data-test="tmdb">Testa nyckeln</button> <span class="test-msg" id="t-tmdb"></span>
-
-      <h3>Streckkoder</h3>
-      <label class="check"><input type="checkbox" id="s-lookup_mymovies" ${s.lookup_mymovies === "1" ? "checked" : ""}> Slå upp i MyMovies (nordiska utgåvor)</label>
-      <label class="check"><input type="checkbox" id="s-lookup_upcitemdb" ${s.lookup_upcitemdb === "1" ? "checked" : ""}> Slå upp i UPCitemdb (amerikanska utgåvor, 100/dag)</label>
-      ${secret("ean_db_token", "EAN-DB-nyckel (valfri)", "JWT-nyckel från ean-db.com")}
-      <p class="muted small">EAN-DB ger 250 gratis uppslag efter registrering. Koder du kopplar till en film kommer appen ihåg.</p>
-
-      <h3>Musik</h3>
-      <label class="check"><input type="checkbox" id="s-lookup_musicbrainz" ${s.lookup_musicbrainz === "1" ? "checked" : ""}> Slå upp i MusicBrainz (gratis, ingen nyckel)</label>
-      <button class="btn small" data-test="musicbrainz">Testa MusicBrainz</button> <span class="test-msg" id="t-musicbrainz"></span>
+      ${test("tmdb", "Testa nyckeln")}`],
+    music: ["Musik", `
+      ${check("lookup_musicbrainz", "Slå upp i MusicBrainz (gratis, ingen nyckel)")}
+      ${test("musicbrainz", "Testa MusicBrainz")}
       ${secret("discogs_token", "Discogs-nyckel (valfri)", "Personal access token från discogs.com")}
-      <button class="btn small" data-test="discogs">Testa Discogs</button> <span class="test-msg" id="t-discogs"></span>
+      ${test("discogs", "Testa Discogs")}
       <p class="muted small">Discogs är bäst på ovanliga utgåvor och vinyl. Nyckel: logga in på discogs.com → Settings → Developers →
-        <i>Generate new token</i>. Gratis.</p>
-
-      <h3>Omslag</h3>
-      <label class="check"><input type="checkbox" id="s-local_posters" ${s.local_posters === "1" ? "checked" : ""}> Spara omslag lokalt i appdata</label>
-      <p class="muted small">${st.posters.files} omslag sparade (${st.posters.mb} MB). Lokala omslag gör att appen fungerar även om TMDB ligger nere.</p>
-
-      <h3>Säkerhetskopior</h3>
-      <div class="two">${text("backup_hours", "Var X:e timme (0 = av)", "24", "number")}${text("backup_keep", "Antal att spara", "14", "number")}</div>
-
+        <i>Generate new token</i>. Gratis.</p>`],
+    barcodes: ["Streckkoder", `
+      ${check("lookup_mymovies", "Slå upp i MyMovies (nordiska utgåvor)")}
+      ${check("lookup_upcitemdb", "Slå upp i UPCitemdb (amerikanska utgåvor, 100/dag)")}
+      ${secret("ean_db_token", "EAN-DB-nyckel (valfri)", "JWT-nyckel från ean-db.com")}
+      <p class="muted small">EAN-DB ger 250 gratis uppslag efter registrering. Koder du kopplar till en film kommer appen ihåg.</p>`],
+    media: ["Plex och Jellyfin", `
       <h3>Plex</h3>
       ${text("plex_url", "Adress", "http://192.168.1.10:32400")}
       ${secret("plex_token", "Plex-token", "X-Plex-Token")}
-      <button class="btn small" data-test="plex">Testa Plex</button> <span class="test-msg" id="t-plex"></span>
+      ${test("plex", "Testa Plex")}
       <p class="muted small">Token: öppna en film i Plex webb → ⋯ → Hämta info → Visa XML. Den står sist i adressen (X-Plex-Token=…).</p>
-
       <h3>Jellyfin</h3>
       ${text("jellyfin_url", "Adress", "http://192.168.1.10:8096")}
       ${secret("jellyfin_api_key", "API-nyckel", "Från Jellyfin")}
-      <button class="btn small" data-test="jellyfin">Testa Jellyfin</button> <span class="test-msg" id="t-jellyfin"></span>
+      ${test("jellyfin", "Testa Jellyfin")}
       <p class="muted small">Nyckel: Jellyfin → Kontrollpanel → API-nycklar → +.</p>
-      ${text("digital_sync_hours", "Synka Plex/Jellyfin var X:e timme", "6", "number")}
-    </div>
-    <button class="btn primary big" id="s-save">Spara inställningar</button>`);
+      ${text("digital_sync_hours", "Synka Plex/Jellyfin var X:e timme", "6", "number")}`],
+  };
+  const [title, html] = sections[section] || sections.general;
+  openSheet(`<h2>${title}</h2><div class="form">${html}</div>
+    <button class="btn primary big" id="s-save">Spara</button>`);
   const collect = () => {
     const out = {};
     for (const el of $$("[id^=s-]", $("#sheet-body"))) {
@@ -2412,7 +2503,13 @@ async function viewSettings() {
     return out;
   };
   const save = async () => { await api("/api/settings", { method: "PUT", json: collect() }); };
-  $("#s-save").onclick = async () => { await save(); toast("Inställningarna sparade", "ok"); refresh(); };
+  $("#s-save").onclick = async () => {
+    await save();
+    const dev = $("#lang-device");
+    if (dev && dev.value !== appLang()) return setLang(dev.value); // laddar om sidan på det nya språket
+    toast("Sparat", "ok"); back();
+  };
+  $("#g-view") && ($("#g-view").onclick = () => show(viewDisplay));
   $$("[data-test]").forEach((b) => (b.onclick = async () => {
     const what = b.dataset.test, out = $("#t-" + what);
     out.textContent = "Testar…"; out.className = "test-msg";

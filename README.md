@@ -2,89 +2,89 @@
 
 # Diskoteket
 
+🇬🇧 **English** · 🇸🇪 [Svenska](README.sv.md)
+
 > [!WARNING]
-> **Vibecodat projekt.** All kod här är skriven av Claude (AI från Anthropic) efter ägarens önskemål –
-> inte av en professionell utvecklare. Koden har inte granskats av någon som kan programmering.
-> Använd den gärna, men på egen risk, och ta säkerhetskopior.
+> **Vibe-coded project.** All code here was written by Claude (AI from Anthropic) at the owner's request –
+> not by a professional developer. The code has not been reviewed by anyone who knows programming.
+> Feel free to use it, but at your own risk, and keep backups.
 
-Egen film-, serie- och musiksamling som du kör själv, till exempel som Docker-container på Unraid.
-Mobilanpassad webbsida med streckkodsskanning, flera samlingar, import från CLZ Movies och CLZ Music,
-omslag från TMDB och MusicBrainz, och koppling till Plex/Jellyfin och Home Assistant.
+Your own movie, TV series and music collection that you host yourself, for example as a Docker container on Unraid.
+A mobile-friendly web app with barcode scanning, multiple collections, import from CLZ Movies and CLZ Music,
+covers from TMDB and MusicBrainz, and integration with Plex/Jellyfin and Home Assistant.
 
-## Så ser det ut
+## What it looks like
 
-![Startsidan med ”Nyligen tillagt” och hela samlingen](docs/screenshots/01-start.jpg)
+![The start page with “Recently added” and the whole collection](docs/screenshots/01-start.jpg)
 
-![Musikfliken med skivomslag](docs/screenshots/02-musik.jpg)
+![The music tab with album covers](docs/screenshots/02-musik.jpg)
 
 <table>
   <tr>
-    <td align="center" width="25%"><img src="docs/screenshots/03-mobil-bokstavslist.jpg" alt="Mobilen med bokstavslisten till höger"><br><sub>Bokstavslist – hoppa direkt till en bokstav</sub></td>
-    <td align="center" width="25%"><img src="docs/screenshots/04-mobil-film.jpg" alt="En film med trailer, regissör och skådespelare"><br><sub>Filmsidan – trailer, skådespelare, filmserie</sub></td>
-    <td align="center" width="25%"><img src="docs/screenshots/05-mobil-album.jpg" alt="Ett album med låtlista"><br><sub>Album med låtlista från MusicBrainz</sub></td>
-    <td align="center" width="25%"><img src="docs/screenshots/06-mobil-statistik.jpg" alt="Statistik för musiken"><br><sub>Statistik för film, musik och värde</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/03-mobil-bokstavslist.jpg" alt="Phone view with the letter bar on the right"><br><sub>Letter bar – jump straight to a letter</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/04-mobil-film.jpg" alt="A movie with trailer, director and actors"><br><sub>Movie page – trailer, actors, collection</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/05-mobil-album.jpg" alt="An album with its track list"><br><sub>Album with track list from MusicBrainz</sub></td>
+    <td align="center" width="25%"><img src="docs/screenshots/06-mobil-statistik.jpg" alt="Music statistics"><br><sub>Statistics for movies, music and value</sub></td>
   </tr>
 </table>
 
 <table>
   <tr>
-    <td align="center" width="30%"><img src="docs/screenshots/07-mobil-arsoversikt.jpg" alt="Årsöversikt"><br><sub>”Ditt år i Diskoteket”</sub></td>
-    <td align="center" width="70%"><img src="docs/screenshots/08-home-assistant.jpg" alt="Home Assistant-kortet i tre detaljnivåer"><br><sub>Home Assistant-kortet: kompakt, standard och detaljerad</sub></td>
+    <td align="center" width="30%"><img src="docs/screenshots/07-mobil-arsoversikt.jpg" alt="Year in review"><br><sub>“Your year in Diskoteket”</sub></td>
+    <td align="center" width="70%"><img src="docs/screenshots/08-home-assistant.jpg" alt="The Home Assistant card at three levels of detail"><br><sub>The Home Assistant card: compact, standard and detailed</sub></td>
   </tr>
 </table>
 
-## Funktioner
+<sub>The screenshots show the owner's collection with the app in Swedish. The app is in English by default.</sub>
 
-- **Skanna streckkoder** med mobilkameran. Okända filmkoder slås upp i MyMovies (nordiska utgåvor),
-  UPCitemdb och valfritt EAN-DB. Koder du kopplar till en film kommer appen ihåg.
-- **Musik** på en egen flik i samma samlingar: album med artist, skivbolag, låtlista och omslag från
-  **MusicBrainz** (gratis) och valfritt **Discogs**. Skanna CD- och vinylstreckkoder eller sök på artist och album.
-- **Flera samlingar**, t.ex. ”Mina filmer” och ”Barnens”, plus vy för alla samlingar på en gång.
-- **Import från CLZ Movies och CLZ Music** (CSV) – appen känner själv igen vilken. Allt följer med, även utlåning och inköpspris.
-- **Omslag** sparade lokalt. Egna omslag via foto, fil eller bildadress, och massimport av många bilder.
-- **Lägg till många på en gång**: fortsätt-läge, kö från serieskanning eller klistra in en lista med titlar.
-- **Sök** på titel (standard), skådespelare, regissör, artist eller allt.
-- Filter, sortering, rutnät i tre storlekar, listvyer, ljust/mörkt tema, ”Nyligen tillagt”-hylla.
-- Önskelista, utlåning, inventering av hyllan, slumpa kvällens film, filmserier.
-- **Statistik** för film och musik, samlingens värde (inköpspris) och dubbletter (samma titel i flera utgåvor).
-- Plex/Jellyfin visar vilka titlar som också finns digitalt – och vilka som **bara** finns digitalt.
-- **Home Assistant-integration** (via HACS) med sensorer och ett eget kort där du väljer detaljnivå.
-- **Valfri inloggning** med lösenord.
-- Automatiska säkerhetskopior som går att **återställa direkt i appen**, och **export** till CSV/JSON.
-- **Bokstavslist** längs högerkanten (som i Radarr) – se var du är och hoppa direkt till en bokstav.
-- **Välj flera** och ändra plats, format, samling, status, skick eller taggar på en gång. **Papperskorg** i 30 dagar.
-- **Egna taggar**, t.ex. ”Jul” eller ”Barnvänligt”, att filtrera på.
-- **Filmsidan:** trailer, var filmen går att streama i Sverige (JustWatch), liknande filmer – ur samlingen och att
-  skaffa – och klickbara skådespelare/regissörer som visar allt du har med dem och vad du saknar.
-- **Saknade säsonger** för serier, med ★ Önska.
-- **Önskelistan:** släppbevakning (när filmen kommer på skiva), länkar till Prisjakt/CDON/Tradera och maxpris,
-  plus en uppgraderingslista (t.ex. DVD → 4K).
-- **Tittarhistorik** (när och hur många gånger), med import från Letterboxd och Trakt, och en **årsöversikt**.
-- **Hyllkarta** med foto och beskrivning per plats, **utlåning med streckkod** och **samlingens utveckling** över åren.
-- **Skick och säljlista** med färdig annonstext till Tradera/Blocket.
-- **Visa-sida för vänner** – en hemlig länk där vänner kan bläddra och be om att låna.
-- **Offline-läge**: appen går att bläddra i även när servern inte nås (kräver HTTPS, eller localhost).
+## Features
 
-## Installera på Unraid
+- **Scan barcodes** with your phone camera. Unknown movie barcodes are looked up in MyMovies (Nordic editions),
+  UPCitemdb and optionally EAN-DB. Codes you link to a movie are remembered.
+- **Search as you type** in the scan box – suggestions with covers, ✓ on what you already own.
+- **Music** on its own tab in the same collections: albums with artist, label, track list and cover from
+  **MusicBrainz** (free) and optionally **Discogs**. Scan CD and vinyl barcodes or search by artist and album.
+- **Multiple collections**, e.g. “My movies” and “Kids”, plus a view of all collections at once.
+- **Import from CLZ Movies and CLZ Music** (CSV) – the app recognizes which one. Everything comes along, including loans and purchase prices.
+- **Covers** stored locally. Your own covers via photo, file or image address, and bulk import of many images.
+- **Add many at once**: keep-adding mode, a queue from scanning in a row, or paste a list of titles.
+- **Search** by title, actor, director, artist or everything. **Filter** by format, genre, tag, actor/director,
+  watched, digital, loaned out or *missing cover*.
+- Grid in three sizes, list views, light/dark theme, a “Recently added” shelf and a **letter bar** (like Radarr).
+- Wish list, loans, shelf inventory, pick a random movie for tonight, movie collections.
+- **Statistics** for movies and music, the collection's value (purchase price), duplicates and growth over the years.
+- Plex/Jellyfin shows which titles you also have digitally – and which you **only** have digitally.
+- **Movie page:** trailer, where to stream it (JustWatch), similar movies, clickable actors/directors and missing seasons.
+- **Wish list:** release tracking (when it comes out on disc), price links, max price and an upgrade list (e.g. DVD → 4K).
+- **Viewing history** with import from Letterboxd and Trakt, and a **year in review**.
+- **Shelf map** with photos, **lending by barcode**, **condition and sale list** with ready-made ad text.
+- **Select many** and change location, format, collection, status, condition or tags at once. **Trash** for 30 days.
+- **Friends page** – a secret link where friends can browse and ask to borrow.
+- **Home Assistant integration** (via HACS) with sensors and a card where you choose the level of detail.
+- **Optional login** with a password. **Backups** that can be **restored in the app**, and **export** to CSV/JSON.
+- **Offline mode**: browse even when the server can't be reached (requires HTTPS, or localhost).
+- **Languages:** English and Swedish (Settings → General). Translations are made by Claude (AI) – corrections are welcome.
 
-Avbilden byggs automatiskt av GitHub vid varje ny version och hämtas från
+## Install on Unraid
+
+The image is built automatically by GitHub for every new version and pulled from
 `ghcr.io/claudemicro222-cmd/diskoteket:latest`.
 
-### Alternativ A – med mallen (enklast)
+### Option A – with the template (easiest)
 
-1. Öppna Unraids terminal (ikonen **`>_`** uppe till höger) och kör:
+1. Open the Unraid terminal (the **`>_`** icon at the top right) and run:
    ```
    curl -fsSL https://raw.githubusercontent.com/claudemicro222-cmd/diskoteket/main/unraid/install-template.sh | bash
    ```
-2. Gå till **Docker → Add Container**.
-3. Välj **Diskoteket** i listan **Template** (under *User templates*).
-4. Kontrollera porten (8080) och appdata-sökvägen (`/mnt/user/appdata/diskoteket`) och klicka **Apply**.
+2. Go to **Docker → Add Container**.
+3. Choose **Diskoteket** in the **Template** list (under *User templates*).
+4. Check the port (8080) and the appdata path (`/mnt/user/appdata/diskoteket`) and click **Apply**.
 
-### Alternativ B – bara i Unraids gränssnitt
+### Option B – only in the Unraid interface
 
-**Docker → Add Container** (slå på **Advanced View** uppe till höger) och fyll i:
+**Docker → Add Container** (turn on **Advanced View** at the top right) and fill in:
 
-| Fält | Värde |
+| Field | Value |
 |---|---|
 | Name | `Diskoteket` |
 | Repository | `ghcr.io/claudemicro222-cmd/diskoteket:latest` |
@@ -92,151 +92,153 @@ Avbilden byggs automatiskt av GitHub vid varje ny version och hämtas från
 | WebUI | `http://[IP]:[PORT:8080]/` |
 | Network Type | `Bridge` |
 
-Lägg sedan till (längst ner, **Add another Path, Port, Variable…**):
+Then add (at the bottom, **Add another Path, Port, Variable…**):
 
-| Typ | Namn | Container | Host / värde |
+| Type | Name | Container | Host / value |
 |---|---|---|---|
-| Port | Webbsida | `8080` | `8080` |
+| Port | Web page | `8080` | `8080` |
 | Path | Appdata | `/config` | `/mnt/user/appdata/diskoteket` |
 | Variable | PUID | `PUID` | `99` |
 | Variable | PGID | `PGID` | `100` |
-| Variable | Tidszon | `TZ` | `Europe/Stockholm` |
+| Variable | Time zone | `TZ` | e.g. `Europe/London` |
 
-Klicka **Apply**.
+Click **Apply**.
 
-### Första start
+### First start
 
-1. Öppna `http://<unraid-ip>:8080` (eller klicka på ikonen → **WebUI**).
-2. **Meny ☰ → Inställningar**: klistra in din TMDB-nyckel och tryck **Testa nyckeln**.
-3. **Meny ☰ → Importera från CLZ**, eller flytta med samlingen från en tidigare installation (se nedan).
+1. Open `http://<unraid-ip>:8080` (or click the icon → **WebUI**).
+2. **Menu ☰ → Settings → TMDB**: paste your TMDB key and press **Test the key**.
+3. **Menu ☰ → Add → Import from CLZ**, or move your collection from an earlier installation (see below).
 
-### Flytta med samlingen från VM:en / en tidigare installation
+### Move the collection from an earlier installation
 
-1. Stoppa den gamla containern.
-2. Kopiera innehållet i dess `data`-mapp (`diskoteket.db`, `posters`, `backup`)
-   till `\\tower\appdata\diskoteket\` – **innan** Diskoteket startas på Unraid första gången.
-   En gammal `samling.db` byter namn automatiskt.
-3. Starta containern. Databasen uppgraderas automatiskt.
+1. Stop the old container.
+2. Copy the contents of its `data` folder (`diskoteket.db`, `posters`, `backup`)
+   to `\\tower\appdata\diskoteket\` – **before** Diskoteket is started on Unraid for the first time.
+   An old `samling.db` is renamed automatically.
+3. Start the container. The database is upgraded automatically.
 
-### Uppdatera
+### Update
 
-- **Manuellt:** Docker-fliken → **Check for Updates** → **apply update** på Diskoteket.
-  (Eller avancerad vy → **Force update**.)
-- **Automatiskt:** installera **CA Auto Update Applications** från Apps och slå på uppdatering för Diskoteket.
+- **Manually:** Docker tab → **Check for Updates** → **apply update** on Diskoteket.
+  (Or advanced view → **Force update**.)
+- **Automatically:** install **CA Auto Update Applications** from Apps and turn on updates for Diskoteket.
 
-Dina data i appdata påverkas aldrig av en uppdatering. Ta ändå gärna en säkerhetskopia först (Meny → Säkerhetskopior).
+Your data in appdata is never affected by an update. It's still a good idea to make a backup first (Menu → Data → Backups).
 
-**Gå tillbaka till en tidigare version:** varje version finns också med sitt nummer, t.ex.
-`ghcr.io/claudemicro222-cmd/diskoteket:4.0`. Byt `latest` mot versionsnumret under **Repository** i containerns
-inställningar och klicka **Apply**. Byt tillbaka till `latest` när du vill ha uppdateringar igen.
+**Go back to an earlier version:** every version is also available with its number, e.g.
+`ghcr.io/claudemicro222-cmd/diskoteket:4.1`. Replace `latest` with the version number under **Repository** in the
+container settings and click **Apply**. Switch back to `latest` when you want updates again.
 
-### Inloggning
+### Login
 
-**Meny → Inloggning**: välj ett lösenord. Den som öppnar appen måste då logga in (en gång per enhet).
-Slå på det om appen nås utanför hemmet. Glömt lösenordet? Ta bort `auth.json` i appdata-mappen och starta om containern.
+**Menu → Settings → Login**: choose a password. Anyone opening the app then has to log in (once per device).
+Turn it on if the app is reachable outside your home. Forgot the password? Delete `auth.json` in the appdata folder and restart the container.
 
-### Kameran på mobilen
+### The camera on your phone
 
-Webbläsare släpper bara fram kameran över **HTTPS**. Lägg Diskoteket bakom en reverse proxy med certifikat
-(t.ex. Nginx Proxy Manager eller SWAG), eller nå den via Tailscale. Tills dess kan streckkoder och titlar skrivas in för hand.
+Browsers only allow the camera over **HTTPS**. Put Diskoteket behind a reverse proxy with a certificate
+(e.g. Nginx Proxy Manager or SWAG), or reach it via Tailscale. Until then, barcodes and titles can be typed in.
 
-## Allt viktigt ligger i appdata
+## Everything important is in appdata
 
 ```
 /mnt/user/appdata/diskoteket/
-├── diskoteket.db     samlingar, titlar, album, inställningar, inlärda streckkoder
-├── auth.json         lösenord (som hash) och API-nyckel – finns bara om inloggning är på
-├── posters/          omslag (från TMDB, MusicBrainz/Discogs och dina egna)
-└── backup/           automatiska säkerhetskopior
+├── diskoteket.db     collections, titles, albums, settings, learned barcodes
+├── auth.json         password (as a hash) and API key – only exists if login is on
+├── posters/          covers (from TMDB, MusicBrainz/Discogs and your own)
+└── backup/           automatic backups
 ```
 
-Filerna ägs av 99:100 (nobody:users), precis som andra Unraid-appar.
+The files are owned by 99:100 (nobody:users), just like other Unraid apps.
 
-**Återställa en säkerhetskopia:** **Meny → Säkerhetskopior → Återställ** på en av appens egna kopior, eller
-**Återställ från fil…** för en `.db`-fil du har sparat. Appen tar först en kopia av nuvarande databas, så det går
-alltid att ångra. Kopior från äldre versioner uppgraderas automatiskt.
+**Restore a backup:** **Menu → Data → Backups → Restore** on one of the app's own copies, or
+**Restore from file…** for a `.db` file you have saved. The app first makes a copy of the current database, so it can
+always be undone. Copies from older versions are upgraded automatically.
 
-**Exportera:** **Meny → Exportera** ger hela samlingen som CSV (kalkylark) eller JSON.
+**Export:** **Menu → Data → Export** gives the whole collection as CSV (spreadsheet) or JSON.
 
-## Köra på en vanlig dator (Docker Desktop)
+## Run on a regular computer (Docker Desktop)
 
 ```
-docker compose up -d                              # hämtar färdig avbild
-docker compose pull && docker compose up -d       # uppdatera
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build   # bygg från koden
+docker compose up -d                              # pulls the ready-made image
+docker compose pull && docker compose up -d       # update
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build   # build from the code
 ```
 
-Öppna http://localhost:8080. Data sparas i mappen `data` bredvid filerna.
+Open http://localhost:8080. Data is saved in the `data` folder next to the files.
 
-## Egna omslag i mängd
+## Many covers at once
 
-**Meny → Importera omslag**: välj många bilder eller en zip-fil. Döp bilderna efter
-streckkod (`7319980033032.jpg`) eller titel, gärna med år (`Evil Dead (1981).jpg`).
+**Menu → Add → Import covers**: choose many images or a zip file. Name the images after the
+barcode (`7319980033032.jpg`) or the title, ideally with the year (`Evil Dead (1981).jpg`).
 
-## Musik
+## Music
 
-1. Exportera från CLZ Music: **CSV**, alla fält.
-2. **Meny → Importera från CLZ**, välj filen och samlingen. Musik och film kan ligga i samma samling.
-3. Låtlistor och skivomslag hämtas sedan i bakgrunden från MusicBrainz – några sekunder per skiva
-   (MusicBrainz tillåter bara ett anrop per sekund). Följ förloppet i menyn.
+1. Export from CLZ Music: **CSV**, all fields.
+2. **Menu → Add → Import from CLZ**, choose the file and the collection. Music and movies can share a collection.
+3. Track lists and album covers are then fetched in the background from MusicBrainz – a few seconds per disc
+   (MusicBrainz only allows one request per second). Follow the progress in the menu.
 
-Vill du ha bättre träffar på ovanliga utgåvor och vinyl: skapa en gratis nyckel på discogs.com
-(Settings → Developers → *Generate new token*) och klistra in den under **Meny → Inställningar → Musik**.
+For better matches on rare editions and vinyl: create a free key on discogs.com
+(Settings → Developers → *Generate new token*) and paste it under **Menu → Settings → Music**.
 
 ## Home Assistant
 
-### Integration och kort (rekommenderas)
+### Integration and card (recommended)
 
-1. **HACS → ⋮ → Anpassade arkiv**: lägg till `https://github.com/claudemicro222-cmd/diskoteket` som typ **Integration**.
-2. Sök på **Diskoteket** i HACS, installera och starta om Home Assistant.
-3. **Inställningar → Enheter och tjänster → Lägg till integration → Diskoteket**. Ange adressen, t.ex.
-   `http://192.168.1.10:8080`. Har du slagit på inloggning behövs API-nyckeln från **Meny → Inloggning**.
-4. Lägg till kortet **Diskoteket** på en instrumentpanel och välj detaljnivå i kortets inställningar:
-   - **Kompakt** – antal filmer, serier och album.
-   - **Standard** – siffror för allt, försenade lån och senast tillagd.
-   - **Detaljerad** – även omslag för det senast tillagda, samlingar och format.
+1. **HACS → ⋮ → Custom repositories**: add `https://github.com/claudemicro222-cmd/diskoteket` as type **Integration**.
+2. Search for **Diskoteket** in HACS, install it and restart Home Assistant.
+3. **Settings → Devices & services → Add integration → Diskoteket**. Enter the address, e.g.
+   `http://192.168.1.10:8080`. If you have turned on login, you need the API key from **Menu → Settings → Login**.
+4. Add the **Diskoteket** card to a dashboard and choose the level of detail in the card settings:
+   - **Compact** – number of movies, series and albums.
+   - **Standard** – numbers for everything, overdue loans and the latest addition.
+   - **Detailed** – also covers of the latest additions, collections and formats.
 
-Kortet följer med integrationen och laddas automatiskt. **Syns inte kortet** när du lägger till ett kort? Starta om
-Home Assistant en gång efter installationen/uppdateringen och ladda sedan om sidan med **Ctrl+F5** (i mobilappen:
-Inställningar → Companion app → Felsökning → *Återställ frontend-cache*). Sök sedan på ”Diskoteket” bland korten, eller
-lägg till ett manuellt kort med `type: custom:diskoteket-card`.
+The card comes with the integration and loads automatically. **Can't find the card?** Restart Home Assistant once after
+installing/updating, then reload the page with **Ctrl+F5** (in the mobile app: Settings → Companion app →
+Troubleshooting → *Reset frontend cache*). Then search for “Diskoteket” among the cards, or add a manual card with
+`type: custom:diskoteket-card`.
 
-Integrationens egen ikon och logotyp visas från **Home Assistant 2026.3**. Integrationen ger också sensorer (filmer, serier, album,
-osedda, önskelista, utlånat, försenade lån, värde, senast tillagd) som går att använda i egna automationer.
+The integration's own icon and logo are shown from **Home Assistant 2026.3**. The integration also provides sensors
+(movies, series, albums, unwatched, wish list, loaned out, overdue loans, value, latest addition) for your own automations.
 
-### Utan integration
+### Without the integration
 
-`GET /api/ha` ger en JSON-sammanfattning. Färdig YAML för en REST-sensor finns under **Meny → Home Assistant**.
+`GET /api/ha` returns a JSON summary. Ready-made YAML for a REST sensor is under **Menu → Settings → Home Assistant**.
 
-## Utveckling
+## Development
 
 ```
 pip install -r requirements.txt -r requirements-dev.txt
-python -m pytest -q                                          # alla tester
-CONFIG_DIR=./data uvicorn app.main:app --reload --port 8080  # starta lokalt
+python -m pytest -q                                          # all tests
+CONFIG_DIR=./data uvicorn app.main:app --reload --port 8080  # run locally
 ```
 
-GitHub kör testerna vid varje push, och bygger bara en ny avbild om de går igenom.
+GitHub runs the tests on every push, and only builds a new image if they pass.
+The code and its comments are in Swedish (the owner's language); the interface is translated in `app/static/i18n.js`.
 
-## Kod
+## Code
 
-| Fil | Innehåll |
+| File | Contents |
 |---|---|
-| `app/main.py` | webbserver (Starlette), API och inloggningsspärren |
-| `app/db.py` | databasen och automatiska uppgraderingar |
-| `app/repo.py` | samlingar, listor, sökning, statistik, dubbletter, export, backup och återställning |
-| `app/barcodes.py` | streckkodsuppslag för film (inlärda, MyMovies, UPCitemdb, EAN-DB) |
-| `app/music.py` | musik: MusicBrainz, Discogs, låtlistor och skivomslag |
-| `app/auth.py` | lösenord och API-nyckel |
-| `app/covers.py` | egna omslag och massimport |
-| `app/enrich.py` | hämtning från TMDB och ”Uppdatera metadata” |
-| `app/tmdb.py` | TMDB-anrop |
-| `app/posters.py` | lokala omslag |
-| `app/settings.py` | inställningssidan |
-| `app/clz_import.py` | import från CLZ Movies och CLZ Music |
+| `app/main.py` | web server (Starlette), API and the login guard |
+| `app/db.py` | the database and automatic upgrades |
+| `app/repo.py` | collections, lists, search, statistics, duplicates, export, backup and restore |
+| `app/barcodes.py` | barcode lookups for movies (learned, MyMovies, UPCitemdb, EAN-DB) |
+| `app/music.py` | music: MusicBrainz, Discogs, track lists and album covers |
+| `app/history.py` | viewing history, Letterboxd/Trakt import, year in review, growth |
+| `app/trash.py`, `app/sharing.py` | the trash and the friends page |
+| `app/auth.py` | password and API key |
+| `app/covers.py` | your own covers and bulk import |
+| `app/enrich.py`, `app/tmdb.py` | TMDB lookups and “Update metadata” |
+| `app/posters.py` | local covers |
+| `app/settings.py` | the settings page |
+| `app/clz_import.py` | import from CLZ Movies and CLZ Music |
 | `app/mediaservers.py` | Plex/Jellyfin |
-| `app/static/` | själva webbsidan |
-| `tests/` | tester (uppgradering av gamla databaser, import, inloggning, återställning, export) |
-| `custom_components/diskoteket/` | Home Assistant-integrationen och kortet |
-| `unraid/` | Unraid-mall, ikon och installationsskript |
-| `.github/workflows/docker.yml` | kör testerna, bygger och publicerar Docker-avbilden |
+| `app/static/` | the web app itself (`i18n.js` = translations) |
+| `tests/` | tests (upgrading old databases, import, login, restore, export, …) |
+| `custom_components/diskoteket/` | the Home Assistant integration and card |
+| `unraid/` | Unraid template, icon and install script |
+| `.github/workflows/docker.yml` | runs the tests, builds and publishes the Docker image |

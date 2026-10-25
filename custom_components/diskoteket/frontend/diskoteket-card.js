@@ -1,13 +1,27 @@
 // Diskoteket-kortet för Home Assistant. Följer med integrationen och laddas automatiskt.
 // Detaljnivå väljs i kortets inställningar: kompakt, standard eller detaljerad.
 
-const DK_VERSION = "4.1.1";
+const DK_VERSION = "4.2.0";
+// Kortets språk följer Home Assistant: svenska om HA är på svenska, annars engelska
+let dkLang = "en";
+const CARD_EN = {
+  "Kompakt": "Compact", "Standard": "Standard", "Detaljerad": "Detailed", "Blandade artister": "Various artists",
+  "Hittade ingen Diskoteket-sensor. Lägg till integrationen Diskoteket först.": "No Diskoteket sensor found. Add the Diskoteket integration first.",
+  "Laddar…": "Loading…", "filmer": "movies", "serier": "series", "album": "albums", "osedda": "unwatched", "önskelista": "wish list",
+  "utlånat": "loaned out", "skivor": "discs", "inköpsvärde": "purchase value", "säsonger": "seasons", "försenat lån": "overdue loan",
+  "försenade lån": "overdue loans", "Senast:": "Latest:", "Nyligen tillagt": "Recently added", "Samlingar": "Collections", "Format": "Formats",
+  "titlar & album": "titles & albums", "titlar": "titles", "Sensor (Diskoteket Titlar)": "Sensor (Diskoteket Titles)",
+  "Detaljnivå": "Level of detail", "Rubrik (valfri)": "Title (optional)", "Visa musik": "Show music", "Visa omslag (detaljerad)": "Show covers (detailed)",
+  "Kompakt: bara antal. Standard: siffror, försenade lån och senast tillagd. Detaljerad: även omslag, samlingar och format.":
+    "Compact: just the numbers. Standard: numbers, overdue loans and the latest addition. Detailed: also covers, collections and formats.",
+};
+const t = (sv) => (dkLang === "sv" ? sv : CARD_EN[sv] || sv);
 const LEVELS = { compact: "Kompakt", standard: "Standard", detailed: "Detaljerad" };
 const VARIOUS = ["various", "various artists", "va", "blandade artister"];
 
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const num = (n) => Number(n || 0).toLocaleString("sv-SE");
-const artistName = (a) => (a && VARIOUS.includes(a.trim().toLowerCase()) ? "Blandade artister" : a || "");
+const artistName = (a) => (a && VARIOUS.includes(a.trim().toLowerCase()) ? t("Blandade artister") : a || "");
 
 const LOGO = `<svg viewBox="0 0 64 64" aria-hidden="true"><defs>
   <radialGradient id="dkd" cx="42%" cy="36%" r="78%"><stop offset="0" stop-color="#fff"/><stop offset=".5" stop-color="#d9dee8"/><stop offset="1" stop-color="#8d96a8"/></radialGradient>
@@ -37,6 +51,7 @@ class DiskoteketCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    dkLang = (hass.language || hass.locale?.language || "en").startsWith("sv") ? "sv" : "en";
     const id = this._config?.entity || findEntity(hass);
     const st = id && hass.states[id];
     const sig = st ? st.last_updated + this._config.detail : "none";
@@ -59,7 +74,7 @@ class DiskoteketCard extends HTMLElement {
     const title = this._config.title || "Diskoteket";
     if (!st) {
       this.shadowRoot.innerHTML = `${STYLE}<ha-card><div class="wrap"><div class="head">${LOGO}<div><div class="title">${esc(title)}</div>
-        <div class="sub">${hass ? "Hittade ingen Diskoteket-sensor. Lägg till integrationen Diskoteket först." : "Laddar…"}</div></div></div></div></ha-card>`;
+        <div class="sub">${hass ? t("Hittade ingen Diskoteket-sensor. Lägg till integrationen Diskoteket först.") : t("Laddar…")}</div></div></div></div></ha-card>`;
       return;
     }
     const a = st.attributes;
@@ -67,36 +82,36 @@ class DiskoteketCard extends HTMLElement {
     const music = this._config.show_music !== false && (a.music || 0) > 0;
     const video = (a.movies || 0) + (a.seasons || 0);
     const total = Number(st.state) || 0;
-    const subtitle = [`${num(a.movies)} filmer`, `${num(a.series)} serier`, music ? `${num(a.music)} album` : null].filter(Boolean).join(" · ");
+    const subtitle = [`${num(a.movies)} ${t("filmer")}`, `${num(a.series)} ${t("serier")}`, music ? `${num(a.music)} ${t("album")}` : null].filter(Boolean).join(" · ");
 
     const pill = (key, n, label) => `<div class="pill"><ha-icon icon="${ICONS[key]}"></ha-icon><b>${num(n)}</b><span>${label}</span></div>`;
     const tile = (key, n, label, cls = "") => `<div class="tile ${cls}"><ha-icon icon="${ICONS[key]}"></ha-icon>
       <div><b>${typeof n === "string" ? n : num(n)}</b><span>${label}</span></div></div>`;
     const overdue = a.overdue ? `<div class="alert"><ha-icon icon="mdi:clock-alert-outline"></ha-icon>
-      <span><b>${a.overdue} ${a.overdue === 1 ? "försenat lån" : "försenade lån"}</b>
+      <span><b>${a.overdue} ${t(a.overdue === 1 ? "försenat lån" : "försenade lån")}</b>
       ${(a.overdue_list || []).slice(0, lvl === "detailed" ? 5 : 2).map((o) => `<br>${esc(o.title)} – ${esc(o.loaned_to)} (${esc(o.due_date)})`).join("")}</span></div>` : "";
 
     let body = "";
     if (lvl === "compact") {
-      body = `<div class="pills">${pill("movies", a.movies, "filmer")}${pill("series", a.series, "serier")}
-        ${music ? pill("music", a.music, "album") : pill("unwatched", a.unwatched, "osedda")}</div>
-        ${a.overdue ? `<div class="alert small"><ha-icon icon="mdi:clock-alert-outline"></ha-icon><span>${a.overdue} ${a.overdue === 1 ? "försenat lån" : "försenade lån"}</span></div>` : ""}`;
+      body = `<div class="pills">${pill("movies", a.movies, t("filmer"))}${pill("series", a.series, t("serier"))}
+        ${music ? pill("music", a.music, t("album")) : pill("unwatched", a.unwatched, t("osedda"))}</div>
+        ${a.overdue ? `<div class="alert small"><ha-icon icon="mdi:clock-alert-outline"></ha-icon><span>${a.overdue} ${t(a.overdue === 1 ? "försenat lån" : "försenade lån")}</span></div>` : ""}`;
     } else {
       body = `<div class="tiles">
-        ${tile("movies", a.movies, "filmer", "hl")}${tile("series", a.series, `serier · ${num(a.seasons)} säsonger`)}
-        ${music ? tile("music", a.music, "album") : tile("discs", a.discs, "skivor")}
-        ${tile("unwatched", a.unwatched, "osedda")}${tile("wishlist", a.wishlist, "önskelista")}${tile("loaned", a.loaned, "utlånat")}
-        ${lvl === "detailed" ? `${tile("discs", a.discs, "skivor")}${a.value ? tile("value", `${num(Math.round(a.value))} kr`, "inköpsvärde") : ""}` : ""}
+        ${tile("movies", a.movies, t("filmer"), "hl")}${tile("series", a.series, `${t("serier")} · ${num(a.seasons)} ${t("säsonger")}`)}
+        ${music ? tile("music", a.music, t("album")) : tile("discs", a.discs, t("skivor"))}
+        ${tile("unwatched", a.unwatched, t("osedda"))}${tile("wishlist", a.wishlist, t("önskelista"))}${tile("loaned", a.loaned, t("utlånat"))}
+        ${lvl === "detailed" ? `${tile("discs", a.discs, t("skivor"))}${a.value ? tile("value", `${num(Math.round(a.value))} kr`, t("inköpsvärde")) : ""}` : ""}
       </div>${overdue}`;
       const latest = (a.latest || []).filter((i) => music || i.kind !== "music");
       if (lvl === "standard" && latest[0]) {
         const l = latest[0];
-        body += `<div class="latest-line"><ha-icon icon="mdi:new-box"></ha-icon><span>Senast: <b>${esc(l.kind === "music" ? `${artistName(l.artist)} – ${l.title}` : l.title)}</b>
+        body += `<div class="latest-line"><ha-icon icon="mdi:new-box"></ha-icon><span>${t("Senast:")} <b>${esc(l.kind === "music" ? `${artistName(l.artist)} – ${l.title}` : l.title)}</b>
           <span class="muted">${esc(l.added_date || "")}</span></span></div>`;
       }
       if (lvl === "detailed") {
         if (this._config.show_covers !== false && latest.length) {
-          body += `<div class="section">Nyligen tillagt</div><div class="shelf">${latest.slice(0, 10).map((l, i) => `
+          body += `<div class="section">${t("Nyligen tillagt")}</div><div class="shelf">${latest.slice(0, 10).map((l, i) => `
             <div class="cover ${l.kind === "music" ? "sq" : ""}"><div class="img" data-p="${esc(l.poster_path || "")}" data-i="${i}">
               ${l.poster_path ? "" : `<span>${esc(l.title)}</span>`}</div>
               <div class="ct">${esc(l.title)}</div><div class="cs">${esc(l.kind === "music" ? artistName(l.artist) : l.year || "")}</div></div>`).join("")}</div>`;
@@ -104,18 +119,18 @@ class DiskoteketCard extends HTMLElement {
         const colls = (a.collections || []).filter((c) => c.titles);
         if (colls.length > 1) {
           const max = Math.max(...colls.map((c) => c.titles));
-          body += `<div class="section">Samlingar</div>${colls.map((c) => `<div class="bar-row"><span>${esc(c.name)}</span>
+          body += `<div class="section">${t("Samlingar")}</div>${colls.map((c) => `<div class="bar-row"><span>${esc(c.name)}</span>
             <span class="bar"><i style="width:${(c.titles / max) * 100}%"></i></span><b>${num(c.titles)}</b></div>`).join("")}`;
         }
         if ((a.formats || []).length) {
-          body += `<div class="section">Format</div><div class="chips">${a.formats.map((f) => `<span class="chip">${esc(f.label)} <b>${num(f.n)}</b></span>`).join("")}</div>`;
+          body += `<div class="section">${t("Format")}</div><div class="chips">${a.formats.map((f) => `<span class="chip">${esc(f.label)} <b>${num(f.n)}</b></span>`).join("")}</div>`;
         }
       }
     }
 
     this.shadowRoot.innerHTML = `${STYLE}<ha-card class="${lvl}"><div class="wrap">
       <div class="head">${LOGO}<div class="grow"><div class="title">${esc(title)}</div><div class="sub">${subtitle}</div></div>
-        <div class="big"><b>${num(total)}</b><span>${music ? "titlar & album" : "titlar"}</span></div></div>
+        <div class="big"><b>${num(total)}</b><span>${t(music ? "titlar & album" : "titlar")}</span></div></div>
       ${body}</div></ha-card>`;
     this.shadowRoot.querySelector(".head").onclick = () => this._more(id);
     if (lvl === "detailed") this._loadCovers(a.diskoteket_entry);
@@ -215,9 +230,9 @@ const STYLE = `<style>
 
 // ---------- Redigeraren (kortets inställningar) ----------
 
-const SCHEMA = [
+const SCHEMA = () => [
   { name: "entity", selector: { entity: { filter: { integration: "diskoteket", domain: "sensor" } } } },
-  { name: "detail", selector: { select: { mode: "list", options: Object.entries(LEVELS).map(([value, label]) => ({ value, label })) } } },
+  { name: "detail", selector: { select: { mode: "list", options: Object.entries(LEVELS).map(([value, label]) => ({ value, label: t(label) })) } } },
   { name: "title", selector: { text: {} } },
   { name: "show_music", selector: { boolean: {} } },
   { name: "show_covers", selector: { boolean: {} } },
@@ -228,14 +243,18 @@ const HELPERS = { detail: "Kompakt: bara antal. Standard: siffror, försenade l�
 
 class DiskoteketCardEditor extends HTMLElement {
   setConfig(config) { this._config = { detail: "standard", show_music: true, show_covers: true, ...config }; this._render(); }
-  set hass(hass) { this._hass = hass; this._render(); }
+  set hass(hass) {
+    this._hass = hass;
+    dkLang = (hass.language || hass.locale?.language || "en").startsWith("sv") ? "sv" : "en";
+    this._render();
+  }
 
   _render() {
     if (!this._hass || !this._config) return;
     if (!this._form) {
       this._form = document.createElement("ha-form");
-      this._form.computeLabel = (s) => LABELS[s.name] || s.name;
-      this._form.computeHelper = (s) => HELPERS[s.name];
+      this._form.computeLabel = (s) => t(LABELS[s.name] || s.name);
+      this._form.computeHelper = (s) => HELPERS[s.name] && t(HELPERS[s.name]);
       this._form.addEventListener("value-changed", (e) => {
         this._config = e.detail.value;
         this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: this._config }, bubbles: true, composed: true }));
@@ -243,7 +262,7 @@ class DiskoteketCardEditor extends HTMLElement {
       this.appendChild(this._form);
     }
     this._form.hass = this._hass;
-    this._form.schema = SCHEMA;
+    this._form.schema = SCHEMA(); // byggs om så att valen följer HA:s språk
     this._form.data = this._config;
   }
 }
@@ -253,7 +272,7 @@ if (!customElements.get("diskoteket-card-editor")) customElements.define("diskot
 window.customCards = window.customCards || [];
 if (!window.customCards.some((c) => c.type === "diskoteket-card")) {
   window.customCards.push({ type: "diskoteket-card", name: "Diskoteket", preview: true,
-    description: "Din film-, serie- och musiksamling – välj hur detaljerat kortet ska vara.",
+    description: "Your movie, series and music collection – choose how detailed the card should be.",
     documentationURL: "https://github.com/claudemicro222-cmd/diskoteket" });
 }
 console.info(`%c DISKOTEKET-KORT %c ${DK_VERSION} `, "background:#f5b301;color:#17120a;font-weight:700", "background:#1c2130;color:#fff");

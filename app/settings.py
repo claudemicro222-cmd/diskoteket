@@ -21,6 +21,7 @@ DEFS = {
     "ean_db_token": ("EAN_DB_TOKEN", "", True),
     "lookup_musicbrainz": ("LOOKUP_MUSICBRAINZ", "1", False),
     "discogs_token": ("DISCOGS_TOKEN", "", True),
+    "language": ("LANGUAGE", "en", False),  # appens språk: en eller sv
 }
 
 _cache: dict | None = None

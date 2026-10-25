@@ -151,3 +151,31 @@ def test_split_guesses_uses_titles_in_collection(client):
         con.execute("UPDATE items SET title='Harry Potter och de vises sten' WHERE title='Alien'")
     assert repo.split_guesses("harrypotter")[0] == "harry potter"
     assert repo.split_guesses("HarryPotter")[0] == "Harry Potter"  # skiftläget behålls
+
+
+def test_empty_and_delete_only_library(client):
+    assert client.post("/api/libraries/1/empty", json={"confirm": "fel"}).status_code == 400
+    r = client.post("/api/libraries/1/empty", json={"confirm": "My collection"}).json()
+    assert r["deleted"] == 5 and r["backup"]
+    assert client.get("/api/items?lib=1").json() == [] and repo.libraries()[0]["name"] == "My collection"
+    # den enda samlingen kan tas bort – en ny tom skapas i stället
+    r = client.request("DELETE", "/api/libraries/1", json={"confirm": "My collection"}).json()
+    assert r["created"] and [l["name"] for l in r["libraries"]] == ["New collection"]
+
+
+def test_person_filter_and_suggestions(client):
+    v = ids(client, kind="video")
+    with db.connect() as con:
+        con.execute("UPDATE items SET actors='Sigourney Weaver | Tom Skerritt' WHERE id=?", (v["Alien"],))
+        con.execute("UPDATE items SET actors='Bruce Campbell' WHERE id=?", (v["Evil Dead"],))
+    assert [i["title"] for i in client.get("/api/items", params={"person": "Tom Skerritt", "lib": 1}).json()] == ["Alien"]
+    assert client.get("/api/items", params={"person": "Tom", "lib": 1}).json() == []  # hela namnet
+    names = [p["name"] for p in client.get("/api/people", params={"q": "sk"}).json()]
+    assert names == ["Tom Skerritt"]
+    assert {p["name"] for p in client.get("/api/people", params={"q": "ridley"}).json()} == {"Ridley Scott"}  # regissör
+
+
+def test_language_default(config_dir, tmp_path):
+    from app import settings
+    db.init()
+    assert settings.get("language") == "en" and repo.libraries()[0]["name"] == "My collection"

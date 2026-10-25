@@ -4,11 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Arbetssätt
 
-- Ägaren skriver på svenska. All text i appen, koden (kommentarer) och dokumentationen är på svenska.
+- Ägaren skriver på svenska – svara på svenska. Koden och kommentarerna är på svenska, och svenska är källspråket i
+  gränssnittet. Appen översätts i `app/static/i18n.js` (engelska; exakt text → mönster → ord för ord). **Ny eller ändrad
+  text i appen ska också läggas in i `i18n.js`.** Kontrollera med engelskt språkval att inget svenskt blir kvar.
+- Engelska är standardspråk för nya installationer (inställningen `language`); databaser från före 4.2 får svenska vid
+  uppgraderingen (`db.init`). README.md är på engelska och README.sv.md på svenska – håll dem i takt.
 - **Bygg inte en ny version utan att fråga.** Samla önskemål i en numrerad lista och bekräfta tolkningen; bygg först när ägaren säger till.
 - Önskemål, status och saker att följa upp står i `ONSKELISTA.md` – läs den först och håll den uppdaterad.
 - Projektet är vibecodat: all kod är skriven av Claude, inte av en professionell utvecklare. Varningsrutan högst upp
-  i `README.md` ska alltid finnas kvar och stämma, även när README skrivs om. Samma sak nämns i Unraid-mallen och i appens meny.
+  i `README.md` och `README.sv.md` ska alltid finnas kvar och stämma, även när README skrivs om. Samma sak nämns i Unraid-mallen och i appens meny.
 - Varje push till `main` kör testerna och bygger sedan `ghcr.io/claudemicro222-cmd/diskoteket:latest` plus en tagg med
   versionsnumret (`VERSION` i `app/main.py`, t.ex. `:4.0`) via `.github/workflows/docker.yml`. Ändringar i bara `*.md`,
   `unraid/`, `custom_components/` eller `hacs.json` bygger ingen ny avbild. Höj `VERSION` vid varje ny version.
